@@ -22,3 +22,32 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# PFMT local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python development artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Frontend development artifacts
+web/node_modules/
+web/dist/
+web/.vite/
+web/playwright-report/
+web/test-results/
+web/coverage/
+
+# Local storage, SQLite database, encrypted objects, logs and caches
+storage/**
+!storage/
+!storage/.gitkeep
+*.sqlite
+*.sqlite3

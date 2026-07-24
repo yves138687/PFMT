@@ -1,0 +1,134 @@
+{
+  "name": "PFMT Phase 1 API Contract",
+  "version": "0.1.0",
+  "base_url_env": "PFMT_API_BASE_URL",
+  "default_base_url": "http://127.0.0.1:8000",
+  "api_prefix_env": "PFMT_API_PREFIX",
+  "default_api_prefix": "/api",
+  "compatible_api_prefixes": ["/api/v1"],
+  "auth": {
+    "type": "bearer",
+    "login_path": "/api/auth/login",
+    "token_fields": ["access_token", "token"]
+  },
+  "scenarios": [
+    {
+      "id": "login",
+      "method": "POST",
+      "path": "/api/auth/login",
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "username": "admin",
+          "password": "admin123456"
+        }
+      },
+      "assertions": [
+        "response_status in [200, 201]",
+        "response_json has access_token",
+        "business endpoints reject missing bearer token"
+      ]
+    },
+    {
+      "id": "logout",
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "auth_required": true,
+      "assertions": [
+        "response_status in [200, 204]",
+        "current session is no longer accepted when server-side sessions are enabled"
+      ]
+    },
+    {
+      "id": "settings_read",
+      "method": "GET",
+      "path": "/api/settings",
+      "auth_required": true,
+      "assertions": [
+        "response_json includes storage.encryption_enabled",
+        "response_json includes hidden.feature_enabled",
+        "response_json includes hidden.show_hidden_default",
+        "response_json includes storage.local_root"
+      ]
+    },
+    {
+      "id": "settings_update",
+      "method": "PUT",
+      "path": "/api/settings/{setting_key}",
+      "auth_required": true,
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "setting_value": true,
+          "value_type": "boolean"
+        }
+      },
+      "assertions": [
+        "response_status in [200, 204]",
+        "subsequent settings_read returns updated values"
+      ]
+    },
+    {
+      "id": "tree_read",
+      "method": "GET",
+      "path": "/api/paths/tree",
+      "auth_required": true,
+      "assertions": [
+        "response_json contains root node",
+        "node has path_id, path_name, children",
+        "hidden nodes respect show_hidden_by_default"
+      ]
+    },
+    {
+      "id": "path_create",
+      "method": "POST",
+      "path": "/api/paths",
+      "auth_required": true,
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "parent_path_id": "root",
+          "path_name": "phase1-check",
+          "is_hidden": false
+        }
+      },
+      "assertions": [
+        "response_status in [200, 201]",
+        "response_json includes path_id",
+        "created path appears in tree_read"
+      ]
+    },
+    {
+      "id": "upload_encrypted_markdown",
+      "method": "POST",
+      "path": "/api/files/upload",
+      "auth_required": true,
+      "request": {
+        "content_type": "multipart/form-data",
+        "fields": {
+          "path_id": "root",
+          "encryption_enabled": "true",
+          "file": "tests/fixtures/markdown/phase1_markdown_sample.md"
+        }
+      },
+      "assertions": [
+        "response_status in [200, 201]",
+        "response_json includes file_id or id",
+        "original_name equals phase1_markdown_sample.md",
+        "storage_object_name is present and not equal to original_name",
+        "encryption_enabled is true"
+      ]
+    },
+    {
+      "id": "markdown_view",
+      "method": "GET",
+      "path": "/api/files/{file_id}/markdown",
+      "auth_required": true,
+      "assertions": [
+        "response_status is 200",
+        "response contains markdown text or rendered html",
+        "unsafe script content is not executable in rendered mode"
+      ]
+    }
+  ]
+}

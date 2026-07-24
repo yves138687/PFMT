@@ -105,14 +105,17 @@
 ### 第一优先级
 
 - 单用户简单登录
+- 基础系统配置
 - 文件树展示
 - 文件上传
 - 文件本体加密
-- 文件列表展示
-- 文件基础预览与打开
+- Markdown 文档查看
+- 基础页面布局
 
 ### 第二优先级
 
+- 文件列表展示
+- 文件基础预览与打开
 - 富文本编辑
 - PDF 展示
 - 图片查看
@@ -263,19 +266,57 @@ PFMT/
 - `docs/Personal_Knowledge_System_Database_Design.md`
 - `docs/Personal_Knowledge_System_Project_Structure_Convention.md`
 
-## 当前阶段结论
+## 第一阶段实现状态
 
-截至 `2026-07-24`，项目已经完成的主要是“方案与文档层收敛”：
+截至 `2026-07-24`，第一阶段基础可用闭环已经落地：
 
-- 明确了隐私文件保护与 AI 能力的边界
-- 明确了加密存储、隐藏控制、元数据搜索的总体方案
-- 明确了轻量化技术栈
-- 明确了数据库主模型
-- 明确了前端交互方向
-- 明确了项目结构约束
+- 后端：`FastAPI + SQLAlchemy 2.x + SQLite`
+- 前端：`Vue 3 + TypeScript + Vite + Pinia + Element Plus`
+- 环境：独立 `conda` 环境 `pfmt-py312`，Python `3.12`
+- 已实现：单用户登录、JWT 会话、系统配置、目录树、目录创建、文件上传、流式加密存储、Markdown 解密读取、审计日志、请求/业务/异常日志
+- 已实现前端页面：登录页、主布局、顶部导航、左侧目录树、首页、上传页、系统配置页、Markdown 只读查看页
+- 已补齐测试：后端 pytest、前端 Vitest、顶层阶段合同/工具校验、API 联调自检脚本
 
-下一阶段最适合直接进入：
+### 本地环境
 
-1. 搭建 `server` 与 `web` 目录骨架
-2. 生成 `FastAPI + SQLAlchemy` 后端初始化代码
-3. 生成 `Vue 3 + Vite` 前端初始化代码
+```powershell
+pwsh ./scripts/dev/bootstrap_dev.ps1
+```
+
+该命令会使用 `scripts/dev/environment.yml` 创建或检查 `pfmt-py312`，并准备 `storage/db`、`storage/data`、`storage/tmp`、`storage/preview`、`storage/backup`、`storage/logs`。
+
+### 本地启动
+
+```powershell
+pwsh ./scripts/dev/start_server.ps1
+pwsh ./scripts/dev/start_web.ps1
+```
+
+默认地址：
+
+- 后端：`http://127.0.0.1:8000`
+- 前端：`http://127.0.0.1:5173`
+
+开发默认账号：
+
+- 用户名：`admin`
+- 密码：`admin123456`
+
+生产或长期自用前必须在本地 `.env` 中替换 `PFMT_ADMIN_PASSWORD`、`PFMT_JWT_SECRET_KEY`、`PFMT_FILE_MASTER_KEY`。其中 `PFMT_FILE_MASTER_KEY` 一旦用于加密文件，后续必须保持稳定，否则旧文件无法解密。
+
+### 测试与自检
+
+```powershell
+pwsh ./scripts/dev/run_tests.ps1
+pwsh ./scripts/dev/self_check.ps1 -RunApi
+```
+
+当前已验证：
+
+- `conda run --no-capture-output -n pfmt-py312 python -m pytest server/tests tests`
+- `conda run --no-capture-output -n pfmt-py312 python -m compileall server\app`
+- `pnpm test`
+- `pnpm typecheck`
+- `pnpm build`
+- `pwsh ./scripts/dev/run_tests.ps1 -SkipInstall`
+- `pwsh ./scripts/dev/self_check.ps1 -RunApi`
