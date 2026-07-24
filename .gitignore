@@ -1,3 +1,9 @@
+# .IDEA
+./.idea/
+
+# codex
+./.codex/
+
 # Compiled class file
 *.class
 
