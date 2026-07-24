@@ -320,3 +320,8 @@ pwsh ./scripts/dev/self_check.ps1 -RunApi
 - `pnpm build`
 - `pwsh ./scripts/dev/run_tests.ps1 -SkipInstall`
 - `pwsh ./scripts/dev/self_check.ps1 -RunApi`
+
+### Idea启动配置
+--app-dir D:\workspace\MyProject\PFMT\server --host 127.0.0.1 --port 8000 --reload
+
+![img.png](docs/assets/idea_start_config.png)
