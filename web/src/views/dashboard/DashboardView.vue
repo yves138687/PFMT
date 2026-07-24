@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Document, Files, FolderOpened, Key, UploadFilled, View } from '@element-plus/icons-vue'
+import { Document, Files, FolderOpened, Key, UploadFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
 import { usePathStore } from '@/stores/pathStore'
@@ -25,7 +25,7 @@ const stats = computed(() => [
 const quickActions = [
   { label: '上传文件', name: 'upload', icon: UploadFilled },
   { label: '系统配置', name: 'settings', icon: Key },
-  { label: 'Markdown 查看', name: 'markdown', icon: View }
+  { label: '文件列表', name: 'folder', icon: FolderOpened }
 ]
 </script>
 
@@ -34,7 +34,7 @@ const quickActions = [
     <div class="page-heading">
       <div>
         <h1>首页</h1>
-        <p>第一阶段工作台，聚焦登录、配置、上传、目录树和 Markdown 查看。</p>
+        <p>第一阶段工作台，聚焦登录、配置、上传、目录树和文件详情查看。</p>
       </div>
     </div>
 

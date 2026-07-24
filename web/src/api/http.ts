@@ -167,5 +167,7 @@ export const http = {
     request<T>(path, { ...options, body, method: 'POST' }),
   put: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(path, { ...options, body, method: 'PUT' }),
+  patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
+    request<T>(path, { ...options, body, method: 'PATCH' }),
   delete: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'DELETE' })
 }

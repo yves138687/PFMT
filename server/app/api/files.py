@@ -4,14 +4,21 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_client_ip, get_current_user, get_db_session
 from app.core.config import Settings, get_settings
 from app.models.user import UserAccount
-from app.schemas.file import FileUploadResponse, MarkdownReadResponse
+from app.schemas.file import (
+    FileDetailResponse,
+    FileListItem,
+    FileMoveRequest,
+    FileRemarkUpdateRequest,
+    FileUploadResponse,
+    MarkdownReadResponse,
+)
 from app.services.file_service import FileService
 
 
 router = APIRouter()
 
 
-@router.get("", response_model=list[FileUploadResponse])
+@router.get("", response_model=list[FileListItem])
 def list_files(
     path_id: str = Query(default="root"),
     show_hidden: bool | None = Query(default=None),
@@ -19,11 +26,91 @@ def list_files(
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
     client_ip: str | None = Depends(get_client_ip),
-) -> list[FileUploadResponse]:
+) -> list[FileListItem]:
     """按目录读取文件列表；show_hidden 未传时按系统隐藏配置过滤。"""
 
     return FileService(db, settings).list_files(
         path_id=path_id,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.get("/{file_id}", response_model=FileDetailResponse)
+def get_file_detail(
+    file_id: str,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDetailResponse:
+    """读取文件详情元数据，不暴露后端存储对象名或物理路径。"""
+
+    return FileService(db, settings).get_file_detail(
+        file_id=file_id,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.patch("/{file_id}/move", response_model=FileDetailResponse)
+def move_file(
+    file_id: str,
+    payload: FileMoveRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDetailResponse:
+    """移动文件到指定目录。"""
+
+    return FileService(db, settings).move_file(
+        file_id=file_id,
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.patch("/{file_id}", response_model=FileDetailResponse)
+def update_file_remark(
+    file_id: str,
+    payload: FileRemarkUpdateRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDetailResponse:
+    """更新文件备注，并返回更新后的文件详情。"""
+
+    return FileService(db, settings).update_file_remark(
+        file_id=file_id,
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_file(
+    file_id: str,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> None:
+    """删除文件。"""
+
+    FileService(db, settings).delete_file(
+        file_id=file_id,
         show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
@@ -56,6 +143,7 @@ async def upload_file(
 @router.get("/{file_id}/markdown", response_model=MarkdownReadResponse)
 def read_markdown(
     file_id: str,
+    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -65,6 +153,7 @@ def read_markdown(
 
     return FileService(db, settings).read_markdown(
         file_id=file_id,
+        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )

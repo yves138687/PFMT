@@ -3,11 +3,11 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Fold,
+  FolderOpened,
   HomeFilled,
   Setting,
   SwitchButton,
   UploadFilled,
-  View,
   Search
 } from '@element-plus/icons-vue'
 
@@ -32,6 +32,15 @@ const displayName = computed(() => authStore.user?.display_name ?? authStore.use
 
 function navigate(name: string) {
   void router.push({ name })
+}
+
+function openRootFolder() {
+  void router.push({
+    name: 'folder',
+    params: {
+      pathId: 'root'
+    }
+  })
 }
 
 async function handleLogout() {
@@ -91,7 +100,7 @@ async function handleLogout() {
         <template #dropdown>
           <el-dropdown-menu>
             <el-dropdown-item :icon="HomeFilled" @click="navigate('dashboard')">首页</el-dropdown-item>
-            <el-dropdown-item :icon="View" @click="navigate('markdown')">Markdown 查看</el-dropdown-item>
+            <el-dropdown-item :icon="FolderOpened" @click="openRootFolder">文件列表</el-dropdown-item>
             <el-dropdown-item divided :icon="SwitchButton" @click="handleLogout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>

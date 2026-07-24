@@ -22,6 +22,9 @@
 | 目录树 | `GET` | `/api/paths/tree` | 获取根节点和基础目录树 | 返回根节点，节点包含 `path_id`、`path_name`、`children` |
 | 创建目录 | `POST` | `/api/paths` | 创建基础目录节点 | 返回目录 `path_id`，可在目录树中看到 |
 | 上传加密 | `POST` | `/api/files/upload` | 上传文件并写入元数据及密文对象 | 返回 `file_id`、`original_name`、随机 `storage_object_name`、`encryption_enabled=true` |
+| 文件列表 | `GET` | `/api/files?path_id=root` | 读取目录下用户侧文件元数据 | 返回文件名、类型、大小、更新时间；不返回存储对象名或物理路径 |
+| 文件详情 | `GET` | `/api/files/{file_id}` | 读取文件属性和逻辑路径 | 返回 `logical_path`、大小、类型、创建/更新时间、备注；不返回存储对象名或物理路径 |
+| 备注更新 | `PATCH` | `/api/files/{file_id}` | 保存文件备注 | 请求体 `remark` 最大 2000 字，空白备注按清空处理 |
 | Markdown 查看 | `GET` | `/api/files/{file_id}/markdown` | 查看已上传 `.md` 文件 | 返回解密后的 Markdown 文本内容 |
 
 ## 自检主流程
@@ -31,12 +34,15 @@
 3. 分别调用 `/api/settings/storage.encryption_enabled`、`/api/settings/hidden.feature_enabled`、`/api/settings/hidden.show_hidden_default` 更新配置。
 4. 调用 `/api/paths/tree`，确认根节点存在。
 5. 使用 `tests/fixtures/markdown/phase1_markdown_sample.md` 调用 `/api/files/upload`，确认返回随机化对象名且启用加密。
-6. 调用 `/api/files/{file_id}/markdown`，确认 Markdown 内容可读取。
+6. 调用 `/api/files?path_id=root` 和 `/api/files/{file_id}`，确认列表与详情不返回存储对象名或物理路径。
+7. 调用 `PATCH /api/files/{file_id}`，确认备注可保存和清空。
+8. 调用 `/api/files/{file_id}/markdown`，确认 Markdown 内容可读取。
 
 ## 安全与隐私断言
 
 - `.env.example` 只能放示例值，不放真实密钥。
 - API 响应不返回 `PFMT_FILE_MASTER_KEY`、派生文件密钥或明文存储路径。
+- 用户侧列表和详情接口不返回存储对象名；上传响应保留随机化对象名断言用于安全自检。
 - 存储对象名不可由原始文件名直接推导。
 - 上传失败时不能留下孤立元数据；元数据写入失败时应清理已写入的文件对象。
 - 隐藏内容展示必须受系统配置控制，并保留后续审计扩展点。

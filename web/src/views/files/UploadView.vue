@@ -68,9 +68,12 @@ function canReadMarkdown(fileInfo?: FileInfo) {
 
 function openMarkdown(fileInfo: FileInfo) {
   void router.push({
-    name: 'markdown',
+    name: 'file-detail',
     params: {
       fileId: fileInfo.file_id
+    },
+    query: {
+      pathId: fileInfo.path_id
     }
   })
 }
@@ -231,17 +234,15 @@ onMounted(async () => {
             <template #default="{ row }">
               <strong>{{ row.file.name }}</strong>
               <small v-if="row.relativePath">{{ row.relativePath }}</small>
-              <small v-if="row.result">文件 ID：{{ row.result.file_id }}</small>
             </template>
           </el-table-column>
           <el-table-column label="大小" width="120">
             <template #default="{ row }">{{ formatFileSize(row.file.size) }}</template>
           </el-table-column>
-          <el-table-column label="逻辑地址 / 存储对象" min-width="300">
+          <el-table-column label="上传位置" min-width="260">
             <template #default="{ row }">
               <span v-if="row.result" class="upload-view__address">
                 <strong>{{ uploadLogicalAddress(row) }}</strong>
-                <small>对象名：{{ row.result.storage_object_name }}</small>
               </span>
               <span v-else class="upload-view__empty">上传完成后显示</span>
             </template>

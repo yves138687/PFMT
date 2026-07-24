@@ -1,5 +1,5 @@
 import { http } from './http'
-import type { FilePathNode } from '@/types/files'
+import type { FilePathNode, PathCreatePayload } from '@/types/files'
 
 function normalizeNode(node: FilePathNode): FilePathNode {
   return {
@@ -19,6 +19,19 @@ export const pathsApi = {
 
     const nodes = Array.isArray(response) ? response : response.nodes
     return nodes.map(normalizeNode)
+  },
+  async createPath(payload: PathCreatePayload) {
+    const response = await http.post<FilePathNode>('/paths', payload)
+    return normalizeNode(response)
+  },
+  async movePath(pathId: string, parentPathId: string) {
+    const response = await http.patch<FilePathNode>(`/paths/${encodeURIComponent(pathId)}/move`, {
+      parent_path_id: parentPathId
+    })
+    return normalizeNode(response)
+  },
+  deletePath(pathId: string) {
+    return http.delete<void>(`/paths/${encodeURIComponent(pathId)}`)
   }
 }
 

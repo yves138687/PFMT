@@ -5,8 +5,6 @@ export interface FileInfo {
   file_id: string
   path_id: string
   original_name: string
-  storage_object_name: string
-  storage_provider?: string
   mime_type?: string | null
   file_ext?: string | null
   file_type: FileType
@@ -15,12 +13,17 @@ export interface FileInfo {
   encryption_enabled: boolean
   key_wrap_version?: string | null
   summary_content?: string | null
+  remark?: string | null
   is_hidden: boolean
   visibility_type: VisibilityType
   status?: string
   created_at?: string
   updated_at?: string
   last_accessed_at?: string | null
+}
+
+export interface FileDetail extends FileInfo {
+  logical_path: string
 }
 
 export interface FilePathNode {
@@ -35,6 +38,14 @@ export interface FilePathNode {
   children: FilePathNode[]
 }
 
+export interface PathCreatePayload {
+  path_name: string
+  parent_path_id: string
+  path_type: VisibilityType
+  description?: string | null
+  is_hidden: boolean
+}
+
 export interface UploadFilePayload {
   file: File
   pathId: string
@@ -42,14 +53,12 @@ export interface UploadFilePayload {
   encryptionEnabled: boolean
 }
 
-export interface UploadFileResult {
-  file: FileInfo
-  storage_object_name?: string
-}
-
 export interface MarkdownFileContent {
   file_id: string
   original_name: string
+  mime_type?: string | null
+  size_bytes: number
+  encoding?: string
   content: string
   updated_at?: string
 }

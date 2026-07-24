@@ -29,6 +29,12 @@ class PathCreateRequest(BaseModel):
         return normalized
 
 
+class PathMoveRequest(BaseModel):
+    """移动目录请求。"""
+
+    parent_path_id: str = Field(max_length=64)
+
+
 class PathRead(BaseModel):
     """目录基础信息响应。"""
 

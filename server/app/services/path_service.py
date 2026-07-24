@@ -1,23 +1,30 @@
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.exceptions import ConflictError, NotFoundError
+from app.core.security import now_utc
 from app.models.file import FilePath
+from app.repositories.file_repository import FileRepository
 from app.repositories.path_repository import PathRepository
-from app.schemas.path import PathCreateRequest, PathRead, PathTreeNode
+from app.schemas.path import PathCreateRequest, PathMoveRequest, PathRead, PathTreeNode
 from app.services.audit_service import AuditService
 from app.services.setting_service import SettingService
+from app.services.storage_service import StorageService
 from app.utils.ids import new_business_id
 
 
 class PathService:
     """目录服务，负责目录树构建、隐藏过滤和创建目录业务。"""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, settings: Settings | None = None):
         self.db = db
+        self.settings = settings or get_settings()
         self.repository = PathRepository(db)
+        self.file_repository = FileRepository(db)
         self.setting_service = SettingService(db)
         self.audit_service = AuditService(db)
+        self.storage_service = StorageService(self.settings)
 
     def get_tree(self, *, show_hidden: bool | None = None) -> list[PathTreeNode]:
         """读取目录树；未显式传 show_hidden 时按系统配置决定隐藏过滤。"""
@@ -75,7 +82,7 @@ class PathService:
             path_id=new_business_id("path"),
             parent_path_id=parent.path_id,
             path_name=payload.path_name,
-            path_type=payload.path_type,
+            path_type="normal",
             path_level=parent.path_level + 1,
             sort_index=self.repository.next_sort_index(parent.path_id),
             full_path=full_path,
@@ -100,15 +107,176 @@ class PathService:
         self.db.refresh(path)
         return self._to_read(path)
 
+    def move_path(
+        self,
+        *,
+        path_id: str,
+        payload: PathMoveRequest,
+        user_id: str,
+        client_ip: str | None,
+    ) -> PathRead:
+        """移动目录到新的父目录，并同步更新子目录冗余 full_path。"""
+
+        action_type = "move_path"
+        path = self.repository.get_active_by_path_id(path_id)
+        if path is None:
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="path_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目录不存在")
+
+        if path.path_id == "root":
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="root_not_movable",
+                client_ip=client_ip,
+            )
+            raise ConflictError("根目录不能移动")
+
+        parent = self.repository.get_active_by_path_id(payload.parent_path_id)
+        if parent is None:
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="parent_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目标目录不存在")
+
+        subtree = self._active_subtree(path.path_id)
+        subtree_ids = {item.path_id for item in subtree}
+        if parent.path_id in subtree_ids:
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="parent_inside_subtree",
+                client_ip=client_ip,
+            )
+            raise ConflictError("不能移动到自身或子目录")
+
+        old_full_path = path.full_path
+        new_full_path = self._join_full_path(parent.full_path, path.path_name)
+        new_full_paths = {
+            item.path_id: new_full_path
+            if item.path_id == path.path_id
+            else f"{new_full_path}{item.full_path.removeprefix(old_full_path)}"
+            for item in subtree
+        }
+        active_paths = [
+            item for item in self.repository.list_active(include_hidden=True) if item.path_id not in subtree_ids
+        ]
+        existing_full_paths = {item.full_path for item in active_paths}
+        if any(full_path in existing_full_paths for full_path in new_full_paths.values()):
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="duplicate_full_path",
+                client_ip=client_ip,
+            )
+            raise ConflictError("目标目录下已存在同名目录")
+
+        updated_at = now_utc()
+        level_delta = parent.path_level + 1 - path.path_level
+        path.parent_path_id = parent.path_id
+        path.sort_index = self.repository.next_sort_index(parent.path_id)
+        for item in subtree:
+            item.full_path = new_full_paths[item.path_id]
+            item.path_level += level_delta
+            item.updated_at = updated_at
+
+        self.audit_service.record(
+            user_id=user_id,
+            action_type=action_type,
+            target_type="file_path",
+            target_id=path.path_id,
+            result="success",
+            detail={"parent_path_id": parent.path_id, "affected_paths": len(subtree)},
+            client_ip=client_ip,
+        )
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("目录移动冲突") from exc
+        self.db.refresh(path)
+        return self._to_read(path)
+
+    def delete_path(
+        self,
+        *,
+        path_id: str,
+        user_id: str,
+        client_ip: str | None,
+    ) -> None:
+        """软删除目录、子目录和其中的文件，并清理文件对象。"""
+
+        action_type = "delete_path"
+        path = self.repository.get_active_by_path_id(path_id)
+        if path is None:
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="path_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目录不存在")
+
+        if path.path_id == "root":
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="root_not_deletable",
+                client_ip=client_ip,
+            )
+            raise ConflictError("根目录不能删除")
+
+        subtree = self._active_subtree(path.path_id)
+        path_ids = [item.path_id for item in subtree]
+        files = self.file_repository.list_active_by_path_ids(path_ids)
+        updated_at = now_utc()
+
+        for file_info in files:
+            self.file_repository.soft_delete(file_info, user_id=user_id)
+
+        for item in subtree:
+            item.status = "deleted"
+            item.full_path = self._deleted_full_path(item)
+            item.updated_at = updated_at
+
+        self.audit_service.record(
+            user_id=user_id,
+            action_type=action_type,
+            target_type="file_path",
+            target_id=path.path_id,
+            result="success",
+            detail={"affected_paths": len(subtree), "affected_files": len(files)},
+            client_ip=client_ip,
+        )
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("目录删除冲突") from exc
+
+        for file_info in files:
+            self.storage_service.delete_object(file_info.storage_path)
+
     def _include_hidden(self, show_hidden: bool | None) -> bool:
         """依据隐藏开关和请求参数决定是否返回隐藏目录。"""
 
         feature_enabled = self.setting_service.get_bool("hidden.feature_enabled", True)
-        if not feature_enabled:
-            return True
-        if show_hidden is not None:
-            return show_hidden
-        return self.setting_service.get_bool("hidden.show_hidden_default", False)
+        return feature_enabled and show_hidden is True
 
     @staticmethod
     def _join_full_path(parent_full_path: str, path_name: str) -> str:
@@ -117,6 +285,56 @@ class PathService:
         if parent_full_path == "/":
             return f"/{path_name}"
         return f"{parent_full_path.rstrip('/')}/{path_name}"
+
+    def _active_subtree(self, path_id: str) -> list[FilePath]:
+        """按父子关系取出一个目录的未删除子树。"""
+
+        paths = self.repository.list_active(include_hidden=True)
+        children_by_parent: dict[str | None, list[FilePath]] = {}
+        root: FilePath | None = None
+        for path in paths:
+            children_by_parent.setdefault(path.parent_path_id, []).append(path)
+            if path.path_id == path_id:
+                root = path
+
+        if root is None:
+            return []
+
+        subtree: list[FilePath] = []
+        stack = [root]
+        while stack:
+            current = stack.pop()
+            subtree.append(current)
+            stack.extend(children_by_parent.get(current.path_id, []))
+        return subtree
+
+    @staticmethod
+    def _deleted_full_path(path: FilePath) -> str:
+        """给软删除目录改写唯一路径，释放原 full_path 供重新创建。"""
+
+        return f"/__deleted__/{path.path_id}"
+
+    def _record_path_action_failure(
+        self,
+        *,
+        user_id: str,
+        path_id: str,
+        action_type: str,
+        reason: str,
+        client_ip: str | None,
+    ) -> None:
+        """目录操作失败时写入审计。"""
+
+        self.audit_service.record(
+            user_id=user_id,
+            action_type=action_type,
+            target_type="file_path",
+            target_id=path_id,
+            result="failed",
+            detail={"reason": reason},
+            client_ip=client_ip,
+        )
+        self.db.commit()
 
     def _to_tree_node(self, path: FilePath) -> PathTreeNode:
         """将目录模型转换为树节点响应。"""

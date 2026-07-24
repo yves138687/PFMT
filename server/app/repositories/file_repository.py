@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -32,8 +34,39 @@ class FileRepository:
         stmt = stmt.order_by(FileInfo.updated_at.desc(), FileInfo.id.desc())
         return list(self.db.execute(stmt).scalars().all())
 
+    def list_active_by_path_ids(self, path_ids: Sequence[str]) -> list[FileInfo]:
+        """查询多个目录下的未删除文件，用于目录级删除。"""
+
+        if not path_ids:
+            return []
+
+        stmt = select(FileInfo).where(FileInfo.path_id.in_(path_ids), FileInfo.status == "active")
+        return list(self.db.execute(stmt).scalars().all())
+
     def mark_accessed(self, file_info: FileInfo) -> None:
         """更新文件最近访问时间。"""
 
         file_info.last_accessed_at = now_utc()
+        file_info.updated_at = now_utc()
+
+    def update_remark(self, file_info: FileInfo, *, remark: str | None, user_id: str) -> None:
+        """更新文件备注和更新人。"""
+
+        file_info.remark = remark
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
+    def move_to_path(self, file_info: FileInfo, *, path_id: str, visibility_type: str, user_id: str) -> None:
+        """移动文件到新的业务目录。"""
+
+        file_info.path_id = path_id
+        file_info.visibility_type = visibility_type
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
+    def soft_delete(self, file_info: FileInfo, *, user_id: str) -> None:
+        """软删除文件元数据。"""
+
+        file_info.status = "deleted"
+        file_info.updated_by = user_id
         file_info.updated_at = now_utc()

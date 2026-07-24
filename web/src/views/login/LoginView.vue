@@ -38,7 +38,7 @@ async function submitLogin() {
       <div class="login-view__intro">
         <span class="login-view__logo">PF</span>
         <h1>PFMT</h1>
-        <p>个人私密文件管理工具</p>
+        <p>个人文件管理工具</p>
       </div>
 
       <el-form ref="formRef" class="login-view__form" :model="form" :rules="rules" label-position="top">

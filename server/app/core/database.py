@@ -1,7 +1,8 @@
 from collections.abc import Generator
+import logging
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import Settings, get_settings
@@ -80,7 +81,25 @@ def init_database(settings: Settings | None = None) -> None:
 
     from app import models  # noqa: F401
 
-    Base.metadata.create_all(bind=get_engine(settings))
+    engine = get_engine(settings)
+    Base.metadata.create_all(bind=engine)
+    _patch_sqlite_schema(engine)
+
+
+def _patch_sqlite_schema(engine: Engine) -> None:
+    """为开发期已有 SQLite 库补齐轻量字段，避免 create_all 无法更新旧表。"""
+
+    if engine.dialect.name != "sqlite":
+        return
+
+    with engine.begin() as connection:
+        columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(file_info)")).all()
+        }
+        if columns and "remark" not in columns:
+            connection.execute(text("ALTER TABLE file_info ADD COLUMN remark TEXT"))
+            logging.getLogger("pfmt.app").info("SQLite file_info.remark 字段补列完成")
 
 
 def reset_database_state() -> None:

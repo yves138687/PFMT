@@ -54,10 +54,6 @@ async function saveSettings() {
             <el-switch v-model="form.hiddenFeatureEnabled" />
             <span class="settings-view__help">控制系统是否支持隐藏目录和隐藏文件。</span>
           </el-form-item>
-          <el-form-item label="默认显示隐藏内容">
-            <el-switch v-model="form.showHiddenDefault" :disabled="!form.hiddenFeatureEnabled" />
-            <span class="settings-view__help">仅在启用隐藏功能后生效，默认关闭以避免暴露隐藏内容存在感。</span>
-          </el-form-item>
         </el-form>
       </div>
     </section>
@@ -76,7 +72,7 @@ async function saveSettings() {
             :closable="false"
             type="info"
             show-icon
-            title="密钥派生、随机对象名和流式加密由后端实现，前端只展示并传递配置状态。"
+            title="密钥派生、随机化存储标识和流式加密由后端实现，前端只展示并传递配置状态。"
           />
         </el-form>
       </div>

@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { ElTree } from 'element-plus'
-import { Folder, Lock, Refresh, Search } from '@element-plus/icons-vue'
+import { Folder, Refresh, Search } from '@element-plus/icons-vue'
 
 import { usePathStore } from '@/stores/pathStore'
 import { useSettingsStore } from '@/stores/settingsStore'
@@ -87,8 +87,7 @@ onMounted(() => {
         <template #default="{ data }">
           <span class="directory-tree__node">
             <el-icon>
-              <Lock v-if="data.path_type === 'private'" />
-              <Folder v-else />
+              <Folder />
             </el-icon>
             <span>{{ data.path_name }}</span>
             <small v-if="settingsStore.showHiddenContent && data.is_hidden">隐藏</small>

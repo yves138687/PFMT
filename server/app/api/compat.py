@@ -328,6 +328,7 @@ def read_markdown_compat(
 
     return FileService(db, settings).read_markdown(
         file_id=file_id,
+        show_hidden=None,
         current_user=current_user,
         client_ip=client_ip,
     )

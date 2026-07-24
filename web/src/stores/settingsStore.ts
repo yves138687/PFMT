@@ -8,7 +8,7 @@ import { DEFAULT_SYSTEM_SETTINGS } from '@/types/settings'
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
     settings: { ...DEFAULT_SYSTEM_SETTINGS } as SystemSettings,
-    showHiddenContent: DEFAULT_SYSTEM_SETTINGS.showHiddenDefault,
+    showHiddenContent: false,
     initialized: false,
     loading: false,
     saving: false
@@ -22,12 +22,11 @@ export const useSettingsStore = defineStore('settings', {
       this.loading = true
       try {
         const settings = await settingsApi.getSettings()
-        this.settings = settings
-        if (!this.initialized) {
-          // 首次加载时才采用系统默认值，避免覆盖用户在当前会话里手动切换的显示隐藏内容状态。
-          this.showHiddenContent = settings.hiddenFeatureEnabled && settings.showHiddenDefault
-        }
+        this.settings = { ...settings, showHiddenDefault: false }
         this.initialized = true
+        if (!this.settings.hiddenFeatureEnabled) {
+          this.showHiddenContent = false
+        }
       } finally {
         this.loading = false
       }
@@ -35,8 +34,9 @@ export const useSettingsStore = defineStore('settings', {
     async saveSettings(settings: SystemSettings) {
       this.saving = true
       try {
-        await settingsApi.updateSettings(settings)
-        this.settings = { ...settings }
+        const normalizedSettings = { ...settings, showHiddenDefault: false }
+        await settingsApi.updateSettings(normalizedSettings)
+        this.settings = normalizedSettings
         if (!settings.hiddenFeatureEnabled) {
           this.showHiddenContent = false
         }

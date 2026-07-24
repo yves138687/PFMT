@@ -49,11 +49,20 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'file/:fileId',
+        name: 'file-detail',
+        component: () => import('@/views/files/FileDetailView.vue'),
+        meta: {
+          title: '文件详情',
+          requiresAuth: true
+        }
+      },
+      {
         path: 'markdown/:fileId?',
         name: 'markdown',
         component: () => import('@/views/markdown/MarkdownView.vue'),
         meta: {
-          title: 'Markdown 查看',
+          title: '文件详情跳转',
           requiresAuth: true
         }
       },

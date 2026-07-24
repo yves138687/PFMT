@@ -30,8 +30,26 @@ describe('settings store', () => {
     await store.loadSettings()
 
     expect(store.encryptionEnabled).toBe(false)
-    expect(store.showHiddenContent).toBe(true)
+    expect(store.showHiddenContent).toBe(false)
+    expect(store.settings.showHiddenDefault).toBe(false)
     expect(store.settings.storageRootPath).toBe('D:/pfmt/storage')
+  })
+
+  it('keeps manually enabled hidden content only in the current session', async () => {
+    vi.mocked(settingsApi.getSettings).mockResolvedValue({
+      hiddenFeatureEnabled: true,
+      encryptionEnabled: true,
+      showHiddenDefault: false,
+      storageRootPath: 'storage/data',
+      aiFeatureEnabled: false,
+      backupGitEnabled: false
+    })
+
+    const store = useSettingsStore()
+    store.setShowHiddenContent(true)
+    await store.loadSettings()
+
+    expect(store.showHiddenContent).toBe(true)
   })
 
   it('turns off visible hidden content when hidden feature is disabled', async () => {
@@ -50,6 +68,8 @@ describe('settings store', () => {
     })
 
     expect(store.showHiddenContent).toBe(false)
-    expect(settingsApi.updateSettings).toHaveBeenCalledOnce()
+    expect(settingsApi.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ showHiddenDefault: false })
+    )
   })
 })

@@ -120,6 +120,46 @@
       ]
     },
     {
+      "id": "file_list",
+      "method": "GET",
+      "path": "/api/files?path_id=root",
+      "auth_required": true,
+      "assertions": [
+        "response_status is 200",
+        "items include file_id, original_name, file_type, size_bytes, updated_at",
+        "items do not include storage_path or storage_object_name"
+      ]
+    },
+    {
+      "id": "file_detail",
+      "method": "GET",
+      "path": "/api/files/{file_id}",
+      "auth_required": true,
+      "assertions": [
+        "response_status is 200",
+        "response_json includes logical_path",
+        "response_json includes created_at, updated_at, size_bytes, remark",
+        "response_json does not include storage_path or storage_object_name"
+      ]
+    },
+    {
+      "id": "file_remark_update",
+      "method": "PATCH",
+      "path": "/api/files/{file_id}",
+      "auth_required": true,
+      "request": {
+        "content_type": "application/json",
+        "body": {
+          "remark": "阶段自检备注"
+        }
+      },
+      "assertions": [
+        "response_status is 200",
+        "response_json.remark equals request remark",
+        "blank remark can clear stored remark"
+      ]
+    },
+    {
       "id": "markdown_view",
       "method": "GET",
       "path": "/api/files/{file_id}/markdown",
