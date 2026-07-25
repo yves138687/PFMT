@@ -1,29 +1,40 @@
 import logging
+from datetime import timedelta, timezone
 from pathlib import Path
+from collections.abc import Iterator
+from typing import Any
+from uuid import uuid4
 
+import jwt
 from fastapi import UploadFile
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedFileTypeError
+from app.core.exceptions import AuthenticationError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedFileTypeError
 from app.core.security import now_utc
-from app.models.file import FileInfo, FilePath
+from app.models.file import FileInfo, FilePath, FileTag
 from app.models.user import UserAccount
-from app.repositories.file_repository import FileRepository
+from app.repositories.file_repository import FileRepository, FileTagRepository
 from app.repositories.path_repository import PathRepository
 from app.schemas.file import (
     FileDetailResponse,
     FileListItem,
     FileMoveRequest,
-    FileRemarkUpdateRequest,
+    FilePreviewTokenResponse,
+    FileSearchResponse,
+    FileTagCreateRequest,
+    FileTagItem,
+    FileTagsUpdateRequest,
+    FileUpdateRequest,
     FileUploadResponse,
     MarkdownReadResponse,
+    TextReadResponse,
 )
 from app.services.audit_service import AuditService
 from app.services.setting_service import SettingService
-from app.services.storage_service import StorageService, StoredObject
-from app.utils.file_type import detect_file_type, is_markdown_file, normalize_extension
+from app.services.storage_service import ContentRange, StorageService, StoredObject
+from app.utils.file_type import detect_file_type, is_markdown_file, is_text_file, normalize_extension
 from app.utils.ids import new_business_id
 
 
@@ -34,11 +45,128 @@ class FileService:
         self.db = db
         self.settings = settings
         self.repository = FileRepository(db)
+        self.tag_repository = FileTagRepository(db)
         self.path_repository = PathRepository(db)
         self.setting_service = SettingService(db)
         self.audit_service = AuditService(db)
         self.storage_service = StorageService(settings)
         self.logger = logging.getLogger("pfmt.business")
+
+    def issue_preview_token(
+        self,
+        *,
+        file_id: str,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FilePreviewTokenResponse:
+        """签发短时效视频预览 Token，供原生 video 标签使用。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="issue_preview_token",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        if file_info.file_type != "video":
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="issue_preview_token",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("当前文件类型暂不支持视频播放")
+
+        expires_at = now_utc() + timedelta(minutes=5)
+        payload: dict[str, Any] = {
+            "sub": current_user.user_id,
+            "fid": file_id,
+            "purpose": "video_preview",
+            "show_hidden": self._include_hidden_files(show_hidden),
+            "jti": uuid4().hex,
+            "exp": expires_at.replace(tzinfo=timezone.utc),
+            "iat": now_utc().replace(tzinfo=timezone.utc),
+        }
+        token = jwt.encode(payload, self.settings.effective_jwt_secret, algorithm=self.settings.jwt_algorithm)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="issue_preview_token",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"purpose": "video_preview", "show_hidden": payload["show_hidden"]},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return FilePreviewTokenResponse(
+            file_id=file_id,
+            preview_url=f"/api/files/{file_id}/video-stream?token={token}",
+            expires_at=expires_at,
+        )
+
+    def stream_video_content(
+        self,
+        *,
+        file_id: str,
+        token: str,
+        content_range: ContentRange | None,
+        client_ip: str | None,
+    ) -> tuple[FileInfo, Iterator[bytes], ContentRange | None]:
+        """校验短期 Token 后返回视频明文流。"""
+
+        payload = self._decode_preview_token(token=token, file_id=file_id)
+        user_id = str(payload["sub"])
+        include_hidden = bool(payload.get("show_hidden"))
+        file_info, parent_path = self._get_visible_file_for_token(
+            file_id=file_id,
+            include_hidden=include_hidden,
+            user_id=user_id,
+            client_ip=client_ip,
+            action_type="stream_video",
+        )
+        if file_info.file_type != "video":
+            self.audit_service.record(
+                user_id=user_id,
+                action_type="stream_video",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("当前文件类型暂不支持视频播放")
+
+        selected_range = content_range
+        if selected_range is not None and selected_range.total != file_info.size_bytes:
+            selected_range = ContentRange(start=selected_range.start, end=selected_range.end, total=file_info.size_bytes)
+
+        chunks = (
+            self.storage_service.iter_plain_range(file_info, selected_range)
+            if selected_range is not None
+            else self.storage_service.iter_content_chunks(file_info)
+        )
+        self.repository.mark_accessed(file_info)
+        self.audit_service.record(
+            user_id=user_id,
+            action_type="stream_video",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={
+                "range_start": selected_range.start if selected_range else None,
+                "range_end": selected_range.end if selected_range else None,
+                "size_bytes": file_info.size_bytes,
+            },
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return file_info, chunks, selected_range
 
     async def upload_file(
         self,
@@ -160,21 +288,8 @@ class FileService:
             self.db.commit()
             raise UnsupportedFileTypeError("仅支持 Markdown 文件读取")
 
-        if file_info.size_bytes > self.settings.markdown_read_max_bytes:
-            raise PayloadTooLargeError("Markdown 文件超过当前读取上限")
-
         try:
-            content_bytes = bytearray()
-            for chunk in self.storage_service.iter_content_chunks(file_info):
-                content_bytes.extend(chunk)
-                if len(content_bytes) > self.settings.markdown_read_max_bytes:
-                    raise PayloadTooLargeError("Markdown 文件超过当前读取上限")
-
-            try:
-                content = bytes(content_bytes).decode("utf-8-sig")
-            except UnicodeDecodeError:
-                content = bytes(content_bytes).decode("utf-8", errors="replace")
-
+            content = self._read_text_content(file_info, too_large_message="Markdown 文件超过当前读取上限")
             self.repository.mark_accessed(file_info)
             self.audit_service.record(
                 user_id=current_user.user_id,
@@ -198,6 +313,71 @@ class FileService:
             self.audit_service.record(
                 user_id=current_user.user_id,
                 action_type="read_markdown",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "read_failed"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
+    def read_text(
+        self,
+        *,
+        file_id: str,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> TextReadResponse:
+        """读取普通文本文件，按既有存储管线解密后返回只读内容。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="read_text",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+
+        if not is_text_file(file_info.file_ext, file_info.mime_type, file_info.file_type):
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="read_text",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("仅支持纯文本文件读取")
+
+        try:
+            content = self._read_text_content(file_info, too_large_message="文本文件超过当前读取上限")
+            self.repository.mark_accessed(file_info)
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="read_text",
+                target_type="file",
+                target_id=file_id,
+                result="success",
+                detail={"size_bytes": file_info.size_bytes},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            return TextReadResponse(
+                file_id=file_info.file_id,
+                original_name=file_info.original_name,
+                mime_type=file_info.mime_type,
+                size_bytes=file_info.size_bytes,
+                content=content,
+            )
+        except Exception:
+            self.db.rollback()
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="read_text",
                 target_type="file",
                 target_id=file_id,
                 result="failed",
@@ -248,7 +428,7 @@ class FileService:
                 "count": len(files),
             },
         )
-        return [self._to_list_item(file_info) for file_info in files]
+        return self._to_list_items(files)
 
     def get_file_detail(
         self,
@@ -287,12 +467,12 @@ class FileService:
         self,
         *,
         file_id: str,
-        payload: FileRemarkUpdateRequest,
+        payload: FileUpdateRequest,
         show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
-        """更新文件备注，备注只写入元数据表，不修改文件本体。"""
+        """更新文件业务元数据，不修改文件本体和存储对象。"""
 
         file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
@@ -301,15 +481,29 @@ class FileService:
             current_user=current_user,
             client_ip=client_ip,
         )
-        remark = self._normalize_remark(payload.remark)
-        self.repository.update_remark(file_info, remark=remark, user_id=current_user.user_id)
+        remark = self._normalize_optional_text(payload.remark)
+        summary_content = self._normalize_optional_text(payload.summary_content)
+        original_name = payload.original_name.strip() if payload.original_name is not None else None
+        self.repository.update_metadata(
+            file_info,
+            original_name=original_name,
+            remark=remark,
+            summary_content=summary_content,
+            is_hidden=payload.is_hidden,
+            user_id=current_user.user_id,
+        )
         self.audit_service.record(
             user_id=current_user.user_id,
             action_type="update_file_remark",
             target_type="file",
             target_id=file_id,
             result="success",
-            detail={"has_remark": remark is not None},
+            detail={
+                "has_remark": remark is not None,
+                "has_summary": summary_content is not None,
+                "renamed": original_name is not None,
+                "is_hidden": file_info.is_hidden,
+            },
             client_ip=client_ip,
         )
         self.db.commit()
@@ -318,6 +512,164 @@ class FileService:
             "文件备注更新完成",
             extra={"action": "update_file_remark", "target_type": "file", "target_id": file_id, "result": "success"},
         )
+        return self._to_detail_response(file_info, parent_path)
+
+    def search_files(
+        self,
+        *,
+        query: str,
+        show_hidden: bool | None,
+        limit: int,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileSearchResponse:
+        """按元数据搜索文件，不读取加密文件本体内容。"""
+
+        normalized_query = query.strip()
+        if not normalized_query:
+            return FileSearchResponse(items=[], total=0)
+        include_hidden = self._include_hidden_files(show_hidden)
+        files = self.repository.search_active(
+            query=normalized_query,
+            include_hidden=include_hidden,
+            limit=min(max(limit, 1), 100),
+        )
+        visible_files = [
+            file_info
+            for file_info in files
+            if self._path_visible_for_file(file_info, include_hidden=include_hidden)
+        ]
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="search_files",
+            target_type="file",
+            result="success",
+            detail={"query_length": len(normalized_query), "count": len(visible_files), "show_hidden": include_hidden},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        items: list[FileDetailResponse] = []
+        for file_info in visible_files:
+            parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)
+            if parent_path is not None:
+                items.append(self._to_detail_response(file_info, parent_path))
+        return FileSearchResponse(items=items, total=len(items))
+
+    def preview_content(
+        self,
+        *,
+        file_id: str,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> tuple[FileInfo, Iterator[bytes]]:
+        """返回图片/PDF预览流；不支持的类型由业务错误处理。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="preview_file",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        if file_info.file_type not in {"image", "pdf"}:
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="preview_file",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("当前文件类型暂不支持预览")
+        self.repository.mark_accessed(file_info)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="preview_file",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"file_type": file_info.file_type},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return file_info, self.storage_service.iter_content_chunks(file_info)
+
+    def list_tags(self) -> list[FileTagItem]:
+        """读取全部活动标签。"""
+
+        return [self._to_tag_item(tag) for tag in self.tag_repository.list_active()]
+
+    def create_tag(
+        self,
+        *,
+        payload: FileTagCreateRequest,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileTagItem:
+        """创建标签；同名标签直接复用。"""
+
+        tag_name = payload.tag_name.strip()
+        existing = self.tag_repository.get_active_by_name(tag_name)
+        if existing is not None:
+            return self._to_tag_item(existing)
+        tag = FileTag(
+            tag_id=new_business_id("tag"),
+            tag_name=tag_name,
+            tag_color=self._normalize_optional_text(payload.tag_color),
+        )
+        self.tag_repository.create(tag)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="create_tag",
+            target_type="file_tag",
+            target_id=tag.tag_id,
+            result="success",
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        self.db.refresh(tag)
+        return self._to_tag_item(tag)
+
+    def update_file_tags(
+        self,
+        *,
+        file_id: str,
+        payload: FileTagsUpdateRequest,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileDetailResponse:
+        """替换文件标签集合。"""
+
+        file_info, parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="update_file_tags",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        tags: list[FileTag] = []
+        for tag_name in payload.tag_names:
+            existing = self.tag_repository.get_active_by_name(tag_name)
+            if existing is None:
+                existing = FileTag(tag_id=new_business_id("tag"), tag_name=tag_name)
+                self.tag_repository.create(existing)
+            tags.append(existing)
+        self.tag_repository.replace_file_tags(file_id=file_id, tags=tags)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="update_file_tags",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"count": len(tags)},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        self.db.refresh(file_info)
         return self._to_detail_response(file_info, parent_path)
 
     def move_file(
@@ -535,13 +887,87 @@ class FileService:
 
         return file_info, parent_path
 
-    @staticmethod
-    def _normalize_remark(remark: str | None) -> str | None:
-        """备注空白时按未填写处理，非空内容保留换行。"""
+    def _decode_preview_token(self, *, token: str, file_id: str) -> dict[str, Any]:
+        try:
+            payload = jwt.decode(token, self.settings.effective_jwt_secret, algorithms=[self.settings.jwt_algorithm])
+        except jwt.PyJWTError as exc:
+            raise AuthenticationError("视频预览链接无效或已过期") from exc
 
-        if remark is None:
+        if payload.get("purpose") != "video_preview" or payload.get("fid") != file_id or not payload.get("sub"):
+            raise AuthenticationError("视频预览链接无效或已过期")
+        return payload
+
+    def _get_visible_file_for_token(
+        self,
+        *,
+        file_id: str,
+        include_hidden: bool,
+        user_id: str,
+        client_ip: str | None,
+        action_type: str,
+    ) -> tuple[FileInfo, FilePath]:
+        file_info = self.repository.get_active_by_file_id(file_id)
+        if file_info is None:
+            self._record_file_action_failure(
+                user_id=user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type=action_type,
+                reason="file_not_found",
+            )
+            raise NotFoundError("文件不存在")
+
+        parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)
+        if parent_path is None:
+            self._record_file_action_failure(
+                user_id=user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type=action_type,
+                reason="path_not_found",
+            )
+            raise NotFoundError("文件不存在")
+
+        if (file_info.is_hidden or parent_path.is_hidden) and not include_hidden:
+            self._record_file_action_failure(
+                user_id=user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type=action_type,
+                reason="hidden_file_not_allowed",
+            )
+            raise NotFoundError("文件不存在")
+
+        return file_info, parent_path
+
+    @staticmethod
+    def _normalize_optional_text(value: str | None) -> str | None:
+        """空白字符串按未填写处理，非空内容保留换行。"""
+
+        if value is None:
             return None
-        return remark if remark.strip() else None
+        return value if value.strip() else None
+
+    def _read_text_content(self, file_info: FileInfo, *, too_large_message: str) -> str:
+        if file_info.size_bytes > self.settings.markdown_read_max_bytes:
+            raise PayloadTooLargeError(too_large_message)
+
+        content_bytes = bytearray()
+        for chunk in self.storage_service.iter_content_chunks(file_info):
+            content_bytes.extend(chunk)
+            if len(content_bytes) > self.settings.markdown_read_max_bytes:
+                raise PayloadTooLargeError(too_large_message)
+
+        try:
+            return bytes(content_bytes).decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return bytes(content_bytes).decode("utf-8", errors="replace")
+
+    def _path_visible_for_file(self, file_info: FileInfo, *, include_hidden: bool) -> bool:
+        parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)
+        if parent_path is None:
+            return False
+        return include_hidden or not parent_path.is_hidden
 
     @staticmethod
     def _logical_path(parent_path: FilePath, file_info: FileInfo) -> str:
@@ -551,8 +977,11 @@ class FileService:
             return f"/{file_info.original_name}"
         return f"{parent_path.full_path.rstrip('/')}/{file_info.original_name}"
 
-    @staticmethod
-    def _to_list_item(file_info: FileInfo) -> FileListItem:
+    def _to_list_items(self, files: list[FileInfo]) -> list[FileListItem]:
+        tags_by_file_id = self.tag_repository.get_active_by_file_ids([file_info.file_id for file_info in files])
+        return [self._to_list_item(file_info, tags_by_file_id.get(file_info.file_id, [])) for file_info in files]
+
+    def _to_list_item(self, file_info: FileInfo, tags: list[FileTag] | None = None) -> FileListItem:
         """将文件模型转换为列表响应，刻意不返回底层存储对象名。"""
 
         return FileListItem(
@@ -568,6 +997,8 @@ class FileService:
             visibility_type=file_info.visibility_type,
             status=file_info.status,
             remark=file_info.remark,
+            summary_content=file_info.summary_content,
+            tags=[self._to_tag_item(tag) for tag in (tags or self.tag_repository.get_active_by_file_id(file_info.file_id))],
             created_at=file_info.created_at or now_utc(),
             updated_at=file_info.updated_at or now_utc(),
             last_accessed_at=file_info.last_accessed_at,
@@ -581,6 +1012,10 @@ class FileService:
             logical_path=self._logical_path(parent_path, file_info),
             checksum_sha256=file_info.checksum_sha256,
         )
+
+    @staticmethod
+    def _to_tag_item(tag: FileTag) -> FileTagItem:
+        return FileTagItem(tag_id=tag.tag_id, tag_name=tag.tag_name, tag_color=tag.tag_color)
 
     @staticmethod
     def _to_upload_response(file_info: FileInfo) -> FileUploadResponse:

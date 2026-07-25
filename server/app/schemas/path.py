@@ -35,6 +35,26 @@ class PathMoveRequest(BaseModel):
     parent_path_id: str = Field(max_length=64)
 
 
+class PathUpdateRequest(BaseModel):
+    """更新目录元数据。"""
+
+    path_name: str | None = Field(default=None, min_length=1, max_length=255)
+    description: str | None = None
+    is_hidden: bool | None = None
+
+    @field_validator("path_name")
+    @classmethod
+    def validate_path_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("目录名不能为空")
+        if "/" in normalized or "\\" in normalized:
+            raise ValueError("目录名不能包含路径分隔符")
+        return normalized
+
+
 class PathRead(BaseModel):
     """目录基础信息响应。"""
 

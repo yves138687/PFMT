@@ -5,10 +5,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import UploadFile
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import Settings
 from app.models.file import FileInfo
 from app.utils.crypto import (
+    FRAME_HEADER,
+    HEADER,
     KEY_WRAP_VERSION,
     build_header,
     derive_file_key,
@@ -27,6 +30,19 @@ class StoredObject:
     size_bytes: int
     checksum_sha256: str
     key_wrap_version: str | None
+
+
+@dataclass(frozen=True)
+class ContentRange:
+    """明文内容范围，start/end 均为闭区间。"""
+
+    start: int
+    end: int
+    total: int
+
+    @property
+    def length(self) -> int:
+        return self.end - self.start + 1
 
 
 class StorageService:
@@ -107,6 +123,71 @@ class StorageService:
                 if not chunk:
                     break
                 yield chunk
+
+    def iter_plain_range(self, file_info: FileInfo, content_range: ContentRange) -> Iterator[bytes]:
+        """按明文 Range 读取内容，支持加密对象的分块解密和首尾裁剪。"""
+
+        if content_range.start < 0 or content_range.end < content_range.start or content_range.end >= content_range.total:
+            raise ValueError("非法内容范围")
+
+        path = self._absolute_object_path(file_info.storage_path)
+        if file_info.encryption_enabled:
+            yield from self._iter_encrypted_plain_range(file_info, path, content_range)
+            return
+
+        chunk_size = max(64 * 1024, self.settings.upload_chunk_size)
+        remaining = content_range.length
+        with path.open("rb") as file_obj:
+            file_obj.seek(content_range.start)
+            while remaining > 0:
+                chunk = file_obj.read(min(chunk_size, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+
+    def _iter_encrypted_plain_range(
+        self,
+        file_info: FileInfo,
+        path: Path,
+        content_range: ContentRange,
+    ) -> Iterator[bytes]:
+        file_key = derive_file_key(load_master_key(self.settings), file_info.file_id)
+        with path.open("rb") as file_obj:
+            header = file_obj.read(HEADER.size)
+            magic, version, chunk_size = HEADER.unpack(header)
+            if magic != b"PFMTENC1" or version != 1:
+                raise ValueError("不支持的加密文件格式")
+
+            first_chunk_index = content_range.start // chunk_size
+            last_chunk_index = content_range.end // chunk_size
+            full_frame_size = FRAME_HEADER.size + chunk_size + 16
+
+            for chunk_index in range(first_chunk_index, last_chunk_index + 1):
+                plain_start = chunk_index * chunk_size
+                plain_end = min(plain_start + chunk_size - 1, file_info.size_bytes - 1)
+                plain_len = plain_end - plain_start + 1
+                frame_offset = HEADER.size + chunk_index * full_frame_size
+                file_obj.seek(frame_offset)
+                frame_header = file_obj.read(FRAME_HEADER.size)
+                if len(frame_header) != FRAME_HEADER.size:
+                    raise ValueError("加密文件分块头不完整")
+
+                stored_chunk_index, nonce, ciphertext_len = FRAME_HEADER.unpack(frame_header)
+                if stored_chunk_index != chunk_index:
+                    raise ValueError("加密文件分块顺序异常")
+                if ciphertext_len != plain_len + 16:
+                    raise ValueError("加密文件分块长度异常")
+
+                ciphertext = file_obj.read(ciphertext_len)
+                if len(ciphertext) != ciphertext_len:
+                    raise ValueError("加密文件分块内容不完整")
+
+                aad = f"{file_info.file_id}:{chunk_index}".encode("utf-8")
+                plaintext = AESGCM(file_key).decrypt(nonce, ciphertext, aad)
+                slice_start = max(content_range.start - plain_start, 0)
+                slice_end = min(content_range.end - plain_start + 1, len(plaintext))
+                yield plaintext[slice_start:slice_end]
 
     def delete_object(self, storage_path: str) -> None:
         """补偿删除已经落盘但元数据入库失败的对象文件。"""

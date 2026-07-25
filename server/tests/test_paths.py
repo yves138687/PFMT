@@ -105,6 +105,47 @@ def test_path_can_be_moved_with_descendants(client: TestClient, auth_headers: di
         assert child_path.path_level == 3
 
 
+def test_path_can_be_renamed_and_hidden_with_descendants(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """目录重命名会同步子目录路径，隐藏目录默认不出现在目录树。"""
+
+    parent = client.post(
+        "/api/v1/paths",
+        headers=auth_headers,
+        json={"path_name": "Projects", "parent_path_id": "root", "path_type": "normal"},
+    ).json()
+    child = client.post(
+        "/api/v1/paths",
+        headers=auth_headers,
+        json={"path_name": "Alpha", "parent_path_id": parent["path_id"], "path_type": "normal"},
+    ).json()
+
+    update_response = client.patch(
+        f"/api/v1/paths/{parent['path_id']}",
+        headers=auth_headers,
+        json={"path_name": "Archive", "description": "done", "is_hidden": True},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["full_path"] == "/Archive"
+    assert update_response.json()["is_hidden"] is True
+
+    tree = client.get("/api/v1/paths/tree", headers=auth_headers).json()[0]
+    assert "Archive" not in [item["path_name"] for item in tree["children"]]
+
+    visible_tree = client.get(
+        "/api/v1/paths/tree",
+        headers=auth_headers,
+        params={"show_hidden": "true"},
+    ).json()[0]
+    assert "Archive" in [item["path_name"] for item in visible_tree["children"]]
+
+    with Session(get_engine()) as db:
+        child_path = db.execute(select(FilePath).where(FilePath.path_id == child["path_id"])).scalar_one()
+        assert child_path.full_path == "/Archive/Alpha"
+
+
 def test_path_delete_removes_subtree_files_and_frees_name(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

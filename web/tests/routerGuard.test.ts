@@ -2,9 +2,14 @@ import { createMemoryHistory } from 'vue-router'
 import { describe, expect, it } from 'vitest'
 
 import { createAppRouter, installRouteGuards } from '@/router'
+import { routes } from '@/router'
 import { clearAuthSnapshot, setAuthSnapshot } from '@/utils/authStorage'
 
 describe('router guard', () => {
+  it('does not expose upload as a standalone business page', () => {
+    expect(JSON.stringify(routes)).not.toContain('"name":"upload"')
+  })
+
   it('redirects anonymous users to login for business routes', async () => {
     clearAuthSnapshot()
     const router = createAppRouter(createMemoryHistory())
@@ -32,5 +37,22 @@ describe('router guard', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('dashboard')
+  })
+
+  it('keeps search query on authenticated search route', async () => {
+    setAuthSnapshot('token-123', {
+      user_id: 'user-1',
+      username: 'admin',
+      display_name: '管理员',
+      status: 'active'
+    })
+    const router = createAppRouter(createMemoryHistory())
+    installRouteGuards(router)
+
+    await router.push('/search?q=alpha')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('search')
+    expect(router.currentRoute.value.query.q).toBe('alpha')
   })
 })

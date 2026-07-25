@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Fold,
@@ -26,6 +26,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const settingsStore = useSettingsStore()
+const searchKeyword = ref('')
 
 const pageTitle = computed(() => route.meta.title ?? '工作台')
 const displayName = computed(() => authStore.user?.display_name ?? authStore.user?.username ?? '单用户')
@@ -47,6 +48,42 @@ async function handleLogout() {
   await authStore.logout()
   await router.push({ name: 'login' })
 }
+
+function submitSearch() {
+  const keyword = searchKeyword.value.trim()
+  if (!keyword) {
+    return
+  }
+  void router.push({
+    name: 'search',
+    query: {
+      q: keyword
+    }
+  })
+}
+
+function openUploadDialog() {
+  const pathId = route.name === 'folder' && typeof route.params.pathId === 'string' ? route.params.pathId : 'root'
+  void router.push({
+    name: 'folder',
+    params: {
+      pathId
+    },
+    query: {
+      upload: '1'
+    }
+  })
+}
+
+watch(
+  () => route.query.q,
+  (value) => {
+    if (route.name === 'search' && typeof value === 'string') {
+      searchKeyword.value = value
+    }
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -70,7 +107,13 @@ async function handleLogout() {
     </div>
 
     <div class="top-nav__right">
-      <el-input class="top-nav__search" placeholder="元数据搜索后续开放" disabled>
+      <el-input
+        v-model="searchKeyword"
+        class="top-nav__search"
+        placeholder="搜索元数据"
+        clearable
+        @keyup.enter="submitSearch"
+      >
         <template #prefix>
           <el-icon><Search /></el-icon>
         </template>
@@ -86,7 +129,7 @@ async function handleLogout() {
       </div>
 
       <el-tooltip content="上传文件" placement="bottom">
-        <el-button :icon="UploadFilled" circle @click="navigate('upload')" />
+        <el-button :icon="UploadFilled" circle @click="openUploadDialog" />
       </el-tooltip>
       <el-tooltip content="系统配置" placement="bottom">
         <el-button :icon="Setting" circle @click="navigate('settings')" />

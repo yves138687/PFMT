@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_client_ip, get_current_user, get_db_session
 from app.models.user import UserAccount
-from app.schemas.path import PathCreateRequest, PathMoveRequest, PathRead, PathTreeNode
+from app.schemas.path import PathCreateRequest, PathMoveRequest, PathRead, PathTreeNode, PathUpdateRequest
 from app.services.path_service import PathService
 
 
@@ -48,6 +48,24 @@ def move_path(
     """移动目录节点。"""
 
     return PathService(db).move_path(
+        path_id=path_id,
+        payload=payload,
+        user_id=current_user.user_id,
+        client_ip=client_ip,
+    )
+
+
+@router.patch("/{path_id}", response_model=PathRead)
+def update_path(
+    path_id: str,
+    payload: PathUpdateRequest,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    client_ip: str | None = Depends(get_client_ip),
+) -> PathRead:
+    """更新目录名称、描述和隐藏状态。"""
+
+    return PathService(db).update_path(
         path_id=path_id,
         payload=payload,
         user_id=current_user.user_id,

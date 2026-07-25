@@ -31,7 +31,7 @@ export function registerUnauthorizedHandler(handler: UnauthorizedHandler) {
   unauthorizedHandler = handler
 }
 
-function buildUrl(path: string, query?: QueryParams) {
+export function buildUrl(path: string, query?: QueryParams) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   const url = new URL(`${API_BASE_URL}${normalizedPath}`, window.location.origin)
 
@@ -161,6 +161,43 @@ export async function request<T>(path: string, options: RequestOptions = {}) {
   }
 }
 
+export async function requestBlob(path: string, options: RequestOptions = {}) {
+  const { body: _body, query, skipAuth, skipErrorMessage, headers: initHeaders, ...init } = options
+  const headers = new Headers(initHeaders)
+  const token = getAccessToken()
+  if (token && !skipAuth) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+
+  let response: Response
+  try {
+    response = await fetch(buildUrl(path, query), {
+      ...init,
+      headers
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '网络请求失败'
+    notifyError(message, skipErrorMessage)
+    throw new ApiError(message, 0, error)
+  }
+
+  if (response.status === 401) {
+    clearAuthSnapshot()
+    notifyError('登录已过期，请重新登录', skipErrorMessage)
+    unauthorizedHandler?.()
+    throw new ApiError('登录已过期，请重新登录', response.status)
+  }
+
+  if (!response.ok) {
+    const payload = await parseBody(response)
+    const message = getMessage(payload, `请求失败：${response.status}`)
+    notifyError(message, skipErrorMessage)
+    throw new ApiError(message, response.status, payload)
+  }
+
+  return response.blob()
+}
+
 export const http = {
   get: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'GET' }),
   post: <T>(path: string, body?: unknown, options?: RequestOptions) =>
@@ -169,5 +206,6 @@ export const http = {
     request<T>(path, { ...options, body, method: 'PUT' }),
   patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(path, { ...options, body, method: 'PATCH' }),
-  delete: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'DELETE' })
+  delete: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'DELETE' }),
+  blob: (path: string, options?: RequestOptions) => requestBlob(path, { ...options, method: 'GET' })
 }

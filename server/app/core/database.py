@@ -100,6 +100,49 @@ def _patch_sqlite_schema(engine: Engine) -> None:
         if columns and "remark" not in columns:
             connection.execute(text("ALTER TABLE file_info ADD COLUMN remark TEXT"))
             logging.getLogger("pfmt.app").info("SQLite file_info.remark 字段补列完成")
+        if columns and "summary_content" not in columns:
+            connection.execute(text("ALTER TABLE file_info ADD COLUMN summary_content TEXT"))
+        if columns and "summary_source" not in columns:
+            connection.execute(text("ALTER TABLE file_info ADD COLUMN summary_source VARCHAR(32)"))
+        if columns and "summary_updated_at" not in columns:
+            connection.execute(text("ALTER TABLE file_info ADD COLUMN summary_updated_at DATETIME"))
+
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS file_tag (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tag_id VARCHAR(64) NOT NULL,
+                    tag_name VARCHAR(128) NOT NULL,
+                    tag_color VARCHAR(32),
+                    status VARCHAR(32) NOT NULL DEFAULT 'active',
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL,
+                    CONSTRAINT ck_file_tag_status CHECK (status IN ('active', 'deleted')),
+                    CONSTRAINT uq_file_tag_tag_id UNIQUE (tag_id),
+                    CONSTRAINT uq_file_tag_tag_name UNIQUE (tag_name)
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS file_tag_rel (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id VARCHAR(64) NOT NULL,
+                    tag_id VARCHAR(64) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    CONSTRAINT uq_file_tag_rel_file_tag UNIQUE (file_id, tag_id),
+                    FOREIGN KEY (file_id) REFERENCES file_info(file_id) ON DELETE CASCADE ON UPDATE CASCADE,
+                    FOREIGN KEY (tag_id) REFERENCES file_tag(tag_id) ON DELETE CASCADE ON UPDATE CASCADE
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_tag_status ON file_tag(status)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_tag_rel_file_id ON file_tag_rel(file_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_tag_rel_tag_id ON file_tag_rel(tag_id)"))
 
 
 def reset_database_state() -> None:

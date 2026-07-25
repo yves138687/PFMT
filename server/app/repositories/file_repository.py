@@ -1,10 +1,10 @@
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.core.security import now_utc
-from app.models.file import FileInfo
+from app.models.file import FileInfo, FileTag, FileTagRel
 
 
 class FileRepository:
@@ -34,6 +34,42 @@ class FileRepository:
         stmt = stmt.order_by(FileInfo.updated_at.desc(), FileInfo.id.desc())
         return list(self.db.execute(stmt).scalars().all())
 
+    def list_active_by_file_ids(self, file_ids: Sequence[str]) -> list[FileInfo]:
+        """按文件 ID 批量查询未删除文件。"""
+
+        if not file_ids:
+            return []
+        stmt = select(FileInfo).where(FileInfo.file_id.in_(file_ids), FileInfo.status == "active")
+        return list(self.db.execute(stmt).scalars().all())
+
+    def search_active(self, *, query: str, include_hidden: bool, limit: int) -> list[FileInfo]:
+        """按文件元数据和标签搜索，不读取文件本体。"""
+
+        keyword = f"%{query.lower()}%"
+        stmt = (
+            select(FileInfo)
+            .outerjoin(FileTagRel, FileInfo.file_id == FileTagRel.file_id)
+            .outerjoin(FileTag, FileTagRel.tag_id == FileTag.tag_id)
+            .where(FileInfo.status == "active")
+            .where(
+                or_(
+                    FileInfo.original_name.ilike(keyword),
+                    FileInfo.file_type.ilike(keyword),
+                    FileInfo.file_ext.ilike(keyword),
+                    FileInfo.mime_type.ilike(keyword),
+                    FileInfo.remark.ilike(keyword),
+                    FileInfo.summary_content.ilike(keyword),
+                    FileTag.tag_name.ilike(keyword),
+                )
+            )
+            .distinct()
+            .order_by(FileInfo.updated_at.desc(), FileInfo.id.desc())
+            .limit(limit)
+        )
+        if not include_hidden:
+            stmt = stmt.where(FileInfo.is_hidden.is_(False))
+        return list(self.db.execute(stmt).scalars().all())
+
     def list_active_by_path_ids(self, path_ids: Sequence[str]) -> list[FileInfo]:
         """查询多个目录下的未删除文件，用于目录级删除。"""
 
@@ -56,6 +92,29 @@ class FileRepository:
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 
+    def update_metadata(
+        self,
+        file_info: FileInfo,
+        *,
+        original_name: str | None,
+        remark: str | None,
+        summary_content: str | None,
+        is_hidden: bool | None,
+        user_id: str,
+    ) -> None:
+        """更新文件业务元数据。"""
+
+        if original_name is not None:
+            file_info.original_name = original_name
+        file_info.remark = remark
+        file_info.summary_content = summary_content
+        file_info.summary_source = "manual" if summary_content else None
+        file_info.summary_updated_at = now_utc() if summary_content else None
+        if is_hidden is not None:
+            file_info.is_hidden = is_hidden
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
     def move_to_path(self, file_info: FileInfo, *, path_id: str, visibility_type: str, user_id: str) -> None:
         """移动文件到新的业务目录。"""
 
@@ -70,3 +129,52 @@ class FileRepository:
         file_info.status = "deleted"
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
+
+
+class FileTagRepository:
+    """封装文件标签查询与绑定。"""
+
+    def __init__(self, db: Session):
+        self.db = db
+
+    def list_active(self) -> list[FileTag]:
+        stmt = select(FileTag).where(FileTag.status == "active").order_by(FileTag.tag_name.asc())
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_active_by_name(self, tag_name: str) -> FileTag | None:
+        stmt = select(FileTag).where(FileTag.tag_name == tag_name, FileTag.status == "active")
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_active_by_file_id(self, file_id: str) -> list[FileTag]:
+        stmt = (
+            select(FileTag)
+            .join(FileTagRel, FileTag.tag_id == FileTagRel.tag_id)
+            .where(FileTagRel.file_id == file_id, FileTag.status == "active")
+            .order_by(FileTag.tag_name.asc())
+        )
+        return list(self.db.execute(stmt).scalars().all())
+
+    def get_active_by_file_ids(self, file_ids: Sequence[str]) -> dict[str, list[FileTag]]:
+        if not file_ids:
+            return {}
+        stmt = (
+            select(FileTagRel.file_id, FileTag)
+            .join(FileTag, FileTagRel.tag_id == FileTag.tag_id)
+            .where(FileTagRel.file_id.in_(file_ids), FileTag.status == "active")
+            .order_by(FileTag.tag_name.asc())
+        )
+        grouped: dict[str, list[FileTag]] = {}
+        for file_id, tag in self.db.execute(stmt).all():
+            grouped.setdefault(file_id, []).append(tag)
+        return grouped
+
+    def create(self, tag: FileTag) -> FileTag:
+        self.db.add(tag)
+        return tag
+
+    def replace_file_tags(self, *, file_id: str, tags: Sequence[FileTag]) -> None:
+        existing = self.db.execute(select(FileTagRel).where(FileTagRel.file_id == file_id)).scalars().all()
+        for rel in existing:
+            self.db.delete(rel)
+        for tag in tags:
+            self.db.add(FileTagRel(file_id=file_id, tag_id=tag.tag_id))

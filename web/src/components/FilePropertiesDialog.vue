@@ -2,8 +2,8 @@
 import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
-import { filesApi } from '@/api/files'
-import type { FileDetail, FileInfo, FileType } from '@/types/files'
+import { filesApi, tagsApi } from '@/api/files'
+import type { FileDetail, FileInfo, FileTag, FileType } from '@/types/files'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
 const props = defineProps<{
@@ -21,7 +21,12 @@ const emit = defineEmits<{
 const loading = ref(false)
 const saving = ref(false)
 const detail = ref<FileDetail | null>(null)
+const tagOptions = ref<FileTag[]>([])
+const nameDraft = ref('')
 const remarkDraft = ref('')
+const summaryDraft = ref('')
+const hiddenDraft = ref(false)
+const tagDraft = ref<string[]>([])
 
 const visible = computed({
   get: () => props.modelValue,
@@ -47,25 +52,34 @@ function fileTypeText(value?: FileType) {
   return value ? fileTypeLabels[value] : '-'
 }
 
+function syncDraft(file: FileDetail | FileInfo | null) {
+  nameDraft.value = file?.original_name ?? ''
+  remarkDraft.value = file?.remark ?? ''
+  summaryDraft.value = file?.summary_content ?? ''
+  hiddenDraft.value = Boolean(file?.is_hidden)
+  tagDraft.value = (file?.tags ?? []).map((tag) => tag.tag_name)
+}
+
 async function loadDetail() {
   const fileId = props.fileId ?? props.file?.file_id
   if (!fileId) {
     detail.value = null
-    remarkDraft.value = ''
+    syncDraft(null)
     return
   }
 
   loading.value = true
   try {
-    const response = await filesApi.getFileDetail(fileId, props.showHidden)
+    const [response, tags] = await Promise.all([filesApi.getFileDetail(fileId, props.showHidden), tagsApi.listTags()])
     detail.value = response
-    remarkDraft.value = response.remark ?? ''
+    tagOptions.value = tags
+    syncDraft(response)
   } finally {
     loading.value = false
   }
 }
 
-async function saveRemark() {
+async function saveMetadata() {
   const file = displayFile.value
   if (!file) {
     return
@@ -73,12 +87,25 @@ async function saveRemark() {
 
   saving.value = true
   try {
+    const normalizedName = nameDraft.value.trim()
     const normalizedRemark = remarkDraft.value.trim() ? remarkDraft.value : null
-    const updated = await filesApi.updateFileRemark(file.file_id, normalizedRemark, props.showHidden)
+    const normalizedSummary = summaryDraft.value.trim() ? summaryDraft.value : null
+    const saveShowHidden = props.showHidden || hiddenDraft.value
+    let updated = await filesApi.updateFile(
+      file.file_id,
+      {
+        original_name: normalizedName,
+        remark: normalizedRemark,
+        summary_content: normalizedSummary,
+        is_hidden: hiddenDraft.value
+      },
+      saveShowHidden
+    )
+    updated = await filesApi.updateFileTags(file.file_id, tagDraft.value, saveShowHidden)
     detail.value = updated
-    remarkDraft.value = updated.remark ?? ''
+    syncDraft(updated)
     emit('saved', updated)
-    ElMessage.success('文件备注已保存')
+    ElMessage.success('文件属性已保存')
   } finally {
     saving.value = false
   }
@@ -116,6 +143,9 @@ watch(
       <el-empty v-else description="暂无文件属性" />
 
       <el-form v-if="displayFile" class="file-properties-dialog__remark" label-position="top">
+        <el-form-item label="文件名">
+          <el-input v-model="nameDraft" maxlength="512" show-word-limit />
+        </el-form-item>
         <el-form-item label="文件备注">
           <el-input
             v-model="remarkDraft"
@@ -126,12 +156,43 @@ watch(
             placeholder="添加文件备注"
           />
         </el-form-item>
+        <el-form-item label="摘要">
+          <el-input
+            v-model="summaryDraft"
+            type="textarea"
+            :rows="5"
+            maxlength="8000"
+            show-word-limit
+            placeholder="添加人工摘要"
+          />
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-select
+            v-model="tagDraft"
+            multiple
+            filterable
+            allow-create
+            default-first-option
+            class="file-properties-dialog__tags"
+            placeholder="选择或输入标签"
+          >
+            <el-option
+              v-for="tag in tagOptions"
+              :key="tag.tag_id"
+              :label="tag.tag_name"
+              :value="tag.tag_name"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="showHidden || !displayFile.is_hidden" label="隐藏文件">
+          <el-switch v-model="hiddenDraft" />
+        </el-form-item>
       </el-form>
     </div>
 
     <template #footer>
       <el-button @click="visible = false">关闭</el-button>
-      <el-button type="primary" :loading="saving" :disabled="!displayFile" @click="saveRemark">保存备注</el-button>
+      <el-button type="primary" :loading="saving" :disabled="!displayFile" @click="saveMetadata">保存属性</el-button>
     </template>
   </el-dialog>
 </template>
@@ -144,5 +205,9 @@ watch(
 
 .file-properties-dialog__remark {
   margin-top: 2px;
+}
+
+.file-properties-dialog__tags {
+  width: 100%;
 }
 </style>

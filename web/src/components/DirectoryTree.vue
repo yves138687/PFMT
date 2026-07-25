@@ -43,6 +43,18 @@ function handleNodeClick(node: FilePathNode) {
   })
 }
 
+function openUploadDialog() {
+  void router.push({
+    name: 'folder',
+    params: {
+      pathId: pathStore.selectedPath.path_id
+    },
+    query: {
+      upload: '1'
+    }
+  })
+}
+
 watch(filterText, (value) => {
   treeRef.value?.filter(value)
 })
@@ -97,7 +109,7 @@ onMounted(() => {
     </el-scrollbar>
 
     <div class="directory-tree__footer">
-      <el-button type="primary" plain @click="router.push({ name: 'upload' })">上传文件</el-button>
+      <el-button type="primary" plain @click="openUploadDialog">上传文件</el-button>
       <el-button @click="router.push({ name: 'settings' })">系统配置</el-button>
     </div>
   </aside>

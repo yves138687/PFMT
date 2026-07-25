@@ -23,7 +23,7 @@ const stats = computed(() => [
 ])
 
 const quickActions = [
-  { label: '上传文件', name: 'upload', icon: UploadFilled },
+  { label: '上传文件', name: 'folder', icon: UploadFilled, query: { upload: '1' }, params: { pathId: 'root' } },
   { label: '系统配置', name: 'settings', icon: Key },
   { label: '文件列表', name: 'folder', icon: FolderOpened }
 ]
@@ -70,7 +70,7 @@ const quickActions = [
           :icon="action.icon"
           type="primary"
           plain
-          @click="router.push({ name: action.name })"
+          @click="router.push({ name: action.name, params: action.params, query: action.query })"
         >
           {{ action.label }}
         </el-button>

@@ -14,12 +14,19 @@ export interface FileInfo {
   key_wrap_version?: string | null
   summary_content?: string | null
   remark?: string | null
+  tags?: FileTag[]
   is_hidden: boolean
   visibility_type: VisibilityType
   status?: string
   created_at?: string
   updated_at?: string
   last_accessed_at?: string | null
+}
+
+export interface FileTag {
+  tag_id: string
+  tag_name: string
+  tag_color?: string | null
 }
 
 export interface FileDetail extends FileInfo {
@@ -46,6 +53,24 @@ export interface PathCreatePayload {
   is_hidden: boolean
 }
 
+export interface PathUpdatePayload {
+  path_name?: string | null
+  description?: string | null
+  is_hidden?: boolean | null
+}
+
+export interface FileUpdatePayload {
+  original_name?: string | null
+  remark?: string | null
+  summary_content?: string | null
+  is_hidden?: boolean | null
+}
+
+export interface FileSearchResponse {
+  items: FileDetail[]
+  total: number
+}
+
 export interface UploadFilePayload {
   file: File
   pathId: string
@@ -61,4 +86,20 @@ export interface MarkdownFileContent {
   encoding?: string
   content: string
   updated_at?: string
+}
+
+export interface TextFileContent {
+  file_id: string
+  original_name: string
+  mime_type?: string | null
+  size_bytes: number
+  encoding?: string
+  content: string
+  updated_at?: string
+}
+
+export interface FilePreviewToken {
+  file_id: string
+  preview_url: string
+  expires_at: string
 }

@@ -1,5 +1,15 @@
 import { http } from './http'
-import type { FileDetail, FileInfo, MarkdownFileContent, UploadFilePayload } from '@/types/files'
+import type {
+  FileDetail,
+  FileInfo,
+  FilePreviewToken,
+  FileSearchResponse,
+  FileTag,
+  FileUpdatePayload,
+  MarkdownFileContent,
+  TextFileContent,
+  UploadFilePayload
+} from '@/types/files'
 
 export const filesApi = {
   listFiles(pathId = 'root', showHidden?: boolean) {
@@ -7,6 +17,15 @@ export const filesApi = {
       query: {
         path_id: pathId,
         show_hidden: showHidden
+      }
+    })
+  },
+  searchFiles(query: string, showHidden?: boolean, limit = 50) {
+    return http.get<FileSearchResponse>('/files/search', {
+      query: {
+        q: query,
+        show_hidden: showHidden,
+        limit
       }
     })
   },
@@ -29,11 +48,25 @@ export const filesApi = {
       }
     })
   },
-  updateFileRemark(fileId: string, remark: string | null, showHidden?: boolean) {
+  updateFile(fileId: string, payload: FileUpdatePayload, showHidden?: boolean) {
     return http.patch<FileDetail>(
       `/files/${encodeURIComponent(fileId)}`,
+      payload,
       {
-        remark
+        query: {
+          show_hidden: showHidden
+        }
+      }
+    )
+  },
+  updateFileRemark(fileId: string, remark: string | null, showHidden?: boolean) {
+    return filesApi.updateFile(fileId, { remark }, showHidden)
+  },
+  updateFileTags(fileId: string, tagNames: string[], showHidden?: boolean) {
+    return http.put<FileDetail>(
+      `/files/${encodeURIComponent(fileId)}/tags`,
+      {
+        tag_names: tagNames
       },
       {
         query: {
@@ -67,6 +100,39 @@ export const filesApi = {
       query: {
         show_hidden: showHidden
       }
+    })
+  },
+  getTextFile(fileId: string, showHidden?: boolean) {
+    return http.get<TextFileContent>(`/files/${encodeURIComponent(fileId)}/text`, {
+      query: {
+        show_hidden: showHidden
+      }
+    })
+  },
+  getPreviewBlob(fileId: string, showHidden?: boolean) {
+    return http.blob(`/files/${encodeURIComponent(fileId)}/preview`, {
+      query: {
+        show_hidden: showHidden
+      }
+    })
+  },
+  issuePreviewToken(fileId: string, showHidden?: boolean) {
+    return http.post<FilePreviewToken>(`/files/${encodeURIComponent(fileId)}/preview-token`, undefined, {
+      query: {
+        show_hidden: showHidden
+      }
+    })
+  }
+}
+
+export const tagsApi = {
+  listTags() {
+    return http.get<FileTag[]>('/tags')
+  },
+  createTag(tagName: string, tagColor?: string | null) {
+    return http.post<FileTag>('/tags', {
+      tag_name: tagName,
+      tag_color: tagColor
     })
   }
 }

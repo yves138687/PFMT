@@ -80,4 +80,39 @@ describe('pathsApi', () => {
     expect(String(fetchMock.mock.calls[1][0])).toContain('/api/paths/path_1')
     expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe('DELETE')
   })
+
+  it('updates path metadata through PATCH endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        path_id: 'path_1',
+        parent_path_id: 'root',
+        path_name: 'Archive',
+        path_type: 'normal',
+        path_level: 1,
+        sort_index: 1,
+        full_path: '/Archive',
+        description: 'done',
+        is_hidden: true,
+        status: 'active',
+        created_at: '2026-07-24T00:00:00',
+        updated_at: '2026-07-24T00:00:00'
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await pathsApi.updatePath('path_1', {
+      path_name: 'Archive',
+      description: 'done',
+      is_hidden: true
+    })
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/paths/path_1')
+    expect(init.method).toBe('PATCH')
+    expect(JSON.parse(init.body as string)).toEqual({
+      path_name: 'Archive',
+      description: 'done',
+      is_hidden: true
+    })
+  })
 })

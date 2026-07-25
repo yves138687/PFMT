@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, InfoFilled, Refresh } from '@element-plus/icons-vue'
 
@@ -15,8 +15,12 @@ const router = useRouter()
 const settingsStore = useSettingsStore()
 const detail = ref<FileDetail | null>(null)
 const markdownContent = ref('')
+const textContent = ref('')
+const previewUrl = ref('')
 const loading = ref(false)
 const markdownLoading = ref(false)
+const textLoading = ref(false)
+const previewLoading = ref(false)
 const propertiesVisible = ref(false)
 
 const fileId = computed(() => (typeof route.params.fileId === 'string' ? route.params.fileId : ''))
@@ -29,6 +33,16 @@ const canPreviewMarkdown = computed(() => {
   const file = detail.value
   return !!file && (['.md', '.markdown'].includes((file.file_ext ?? '').toLowerCase()) || file.mime_type === 'text/markdown')
 })
+const canPreviewText = computed(() => !!detail.value && detail.value.file_type === 'text' && !canPreviewMarkdown.value)
+const canPreviewBlob = computed(() => ['image', 'pdf'].includes(detail.value?.file_type ?? ''))
+const canPreviewCurrentFile = computed(() => canPreviewMarkdown.value || canPreviewText.value || canPreviewBlob.value)
+
+function clearPreviewUrl() {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = ''
+  }
+}
 
 function backToFolder() {
   void router.push({
@@ -60,10 +74,41 @@ async function loadMarkdown() {
   }
 }
 
+async function loadText() {
+  if (!fileId.value || !canPreviewText.value) {
+    textContent.value = ''
+    return
+  }
+
+  textLoading.value = true
+  try {
+    const response = await filesApi.getTextFile(fileId.value, settingsStore.showHiddenContent)
+    textContent.value = response.content
+  } finally {
+    textLoading.value = false
+  }
+}
+
+async function loadPreviewBlob() {
+  clearPreviewUrl()
+  if (!fileId.value || !canPreviewBlob.value) {
+    return
+  }
+
+  previewLoading.value = true
+  try {
+    const blob = await filesApi.getPreviewBlob(fileId.value, settingsStore.showHiddenContent)
+    previewUrl.value = URL.createObjectURL(blob)
+  } finally {
+    previewLoading.value = false
+  }
+}
+
 async function loadFileDetail() {
   if (!fileId.value) {
     detail.value = null
     markdownContent.value = ''
+    textContent.value = ''
     return
   }
 
@@ -72,6 +117,8 @@ async function loadFileDetail() {
     await ensureSettingsLoaded()
     detail.value = await filesApi.getFileDetail(fileId.value, settingsStore.showHiddenContent)
     await loadMarkdown()
+    await loadText()
+    await loadPreviewBlob()
   } finally {
     loading.value = false
   }
@@ -79,6 +126,9 @@ async function loadFileDetail() {
 
 function handleFileSaved(updatedFile: FileDetail) {
   detail.value = updatedFile
+  void loadMarkdown()
+  void loadText()
+  void loadPreviewBlob()
 }
 
 watch(
@@ -88,6 +138,10 @@ watch(
   },
   { immediate: true }
 )
+
+onBeforeUnmount(() => {
+  clearPreviewUrl()
+})
 </script>
 
 <template>
@@ -100,7 +154,7 @@ watch(
       <div class="file-detail-view__actions">
         <el-button :icon="ArrowLeft" @click="backToFolder">返回列表</el-button>
         <el-button :icon="InfoFilled" :disabled="!detail" @click="propertiesVisible = true">属性</el-button>
-        <el-button :icon="Refresh" :loading="loading || markdownLoading" @click="loadFileDetail">刷新</el-button>
+        <el-button :icon="Refresh" :loading="loading || markdownLoading || textLoading || previewLoading" @click="loadFileDetail">刷新</el-button>
       </div>
     </div>
 
@@ -116,6 +170,9 @@ watch(
           <span>类型：{{ detail.file_type }}</span>
           <span>MIME：{{ detail.mime_type || '-' }}</span>
           <span>备注：{{ detail.remark || '无' }}</span>
+          <span>摘要：{{ detail.summary_content || '无' }}</span>
+          <span>标签：{{ detail.tags?.map((tag) => tag.tag_name).join('、') || '无' }}</span>
+          <span v-if="settingsStore.showHiddenContent && detail.is_hidden">隐藏：是</span>
         </template>
         <el-empty v-else description="暂无文件详情" />
       </div>
@@ -126,10 +183,13 @@ watch(
         <h2>预览内容</h2>
         <span class="muted">只读查看</span>
       </div>
-      <div v-loading="markdownLoading" class="panel-body file-detail-view__preview">
+      <div v-loading="markdownLoading || textLoading || previewLoading" class="panel-body file-detail-view__preview">
         <article v-if="markdownContent" class="markdown-body" v-html="renderedContent" />
-        <el-empty v-else-if="detail && !canPreviewMarkdown" description="当前文件类型暂不支持预览" />
-        <el-empty v-else description="暂无 Markdown 内容" />
+        <pre v-else-if="textContent" class="text-body">{{ textContent }}</pre>
+        <img v-else-if="detail?.file_type === 'image' && previewUrl" class="file-detail-view__image" :src="previewUrl" :alt="detail.original_name" />
+        <iframe v-else-if="detail?.file_type === 'pdf' && previewUrl" class="file-detail-view__pdf" :src="previewUrl" :title="detail.original_name" />
+        <el-empty v-else-if="detail && !canPreviewCurrentFile" description="当前文件类型暂不支持预览" />
+        <el-empty v-else description="暂无可预览内容" />
       </div>
     </section>
 
@@ -167,9 +227,37 @@ watch(
   min-height: 360px;
 }
 
+.file-detail-view__image {
+  display: block;
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+}
+
+.file-detail-view__pdf {
+  width: 100%;
+  min-height: 70vh;
+  border: 0;
+}
+
 .markdown-body {
   line-height: 1.75;
   color: var(--pfmt-text);
+}
+
+.text-body {
+  width: 100%;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #f8fafc;
+  border: 1px solid var(--pfmt-border);
+  border-radius: 8px;
+  color: var(--pfmt-text);
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  line-height: 1.7;
 }
 
 .markdown-body :deep(h1),

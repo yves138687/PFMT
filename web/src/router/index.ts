@@ -40,15 +40,6 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
-        path: 'upload',
-        name: 'upload',
-        component: () => import('@/views/files/UploadView.vue'),
-        meta: {
-          title: '上传',
-          requiresAuth: true
-        }
-      },
-      {
         path: 'file/:fileId',
         name: 'file-detail',
         component: () => import('@/views/files/FileDetailView.vue'),
@@ -72,6 +63,15 @@ export const routes: RouteRecordRaw[] = [
         component: () => import('@/views/settings/SettingsView.vue'),
         meta: {
           title: '系统配置',
+          requiresAuth: true
+        }
+      },
+      {
+        path: 'search',
+        name: 'search',
+        component: () => import('@/views/search/SearchView.vue'),
+        meta: {
+          title: '搜索',
           requiresAuth: true
         }
       }

@@ -113,3 +113,45 @@ class FileInfo(Base):
         DateTime, nullable=False, default=now_utc, onupdate=now_utc
     )
     last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class FileTag(Base):
+    """文件标签定义，仅用于元数据组织和搜索。"""
+
+    __tablename__ = "file_tag"
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'deleted')", name="ck_file_tag_status"),
+        UniqueConstraint("tag_id", name="uq_file_tag_tag_id"),
+        UniqueConstraint("tag_name", name="uq_file_tag_tag_name"),
+        Index("idx_file_tag_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tag_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    tag_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    tag_color: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=now_utc, onupdate=now_utc
+    )
+
+
+class FileTagRel(Base):
+    """文件与标签的多对多关系。"""
+
+    __tablename__ = "file_tag_rel"
+    __table_args__ = (
+        UniqueConstraint("file_id", "tag_id", name="uq_file_tag_rel_file_tag"),
+        Index("idx_file_tag_rel_file_id", "file_id"),
+        Index("idx_file_tag_rel_tag_id", "tag_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    file_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("file_info.file_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False
+    )
+    tag_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("file_tag.tag_id", onupdate="CASCADE", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_utc)

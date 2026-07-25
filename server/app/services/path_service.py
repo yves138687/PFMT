@@ -7,7 +7,7 @@ from app.core.security import now_utc
 from app.models.file import FilePath
 from app.repositories.file_repository import FileRepository
 from app.repositories.path_repository import PathRepository
-from app.schemas.path import PathCreateRequest, PathMoveRequest, PathRead, PathTreeNode
+from app.schemas.path import PathCreateRequest, PathMoveRequest, PathRead, PathTreeNode, PathUpdateRequest
 from app.services.audit_service import AuditService
 from app.services.setting_service import SettingService
 from app.services.storage_service import StorageService
@@ -207,6 +207,84 @@ class PathService:
         except IntegrityError as exc:
             self.db.rollback()
             raise ConflictError("目录移动冲突") from exc
+        self.db.refresh(path)
+        return self._to_read(path)
+
+    def update_path(
+        self,
+        *,
+        path_id: str,
+        payload: PathUpdateRequest,
+        user_id: str,
+        client_ip: str | None,
+    ) -> PathRead:
+        """更新目录名称、描述和隐藏状态，并同步子目录 full_path。"""
+
+        action_type = "update_path"
+        path = self.repository.get_active_by_path_id(path_id)
+        if path is None:
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="path_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目录不存在")
+        if path.path_id == "root" and payload.path_name is not None:
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="root_not_renamable",
+                client_ip=client_ip,
+            )
+            raise ConflictError("根目录不能重命名")
+
+        old_full_path = path.full_path
+        if payload.path_name is not None and payload.path_name != path.path_name:
+            parent_full_path = "/"
+            if path.parent_path_id is not None:
+                parent = self.repository.get_active_by_path_id(path.parent_path_id)
+                if parent is None:
+                    raise NotFoundError("父目录不存在")
+                parent_full_path = parent.full_path
+            new_full_path = self._join_full_path(parent_full_path, payload.path_name)
+            existing = self.repository.get_by_full_path(new_full_path)
+            if existing is not None and existing.path_id != path.path_id and existing.status == "active":
+                self._record_path_action_failure(
+                    user_id=user_id,
+                    path_id=path_id,
+                    action_type=action_type,
+                    reason="duplicate_full_path",
+                    client_ip=client_ip,
+                )
+                raise ConflictError("同名目录已存在")
+            path.path_name = payload.path_name
+            subtree = self._active_subtree(path.path_id)
+            for item in subtree:
+                item.full_path = new_full_path if item.path_id == path.path_id else f"{new_full_path}{item.full_path.removeprefix(old_full_path)}"
+                item.updated_at = now_utc()
+
+        if payload.description is not None:
+            path.description = payload.description if payload.description.strip() else None
+        if payload.is_hidden is not None:
+            path.is_hidden = payload.is_hidden
+        path.updated_at = now_utc()
+        self.audit_service.record(
+            user_id=user_id,
+            action_type=action_type,
+            target_type="file_path",
+            target_id=path.path_id,
+            result="success",
+            detail={"renamed": payload.path_name is not None, "is_hidden": path.is_hidden},
+            client_ip=client_ip,
+        )
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise ConflictError("目录更新冲突") from exc
         self.db.refresh(path)
         return self._to_read(path)
 

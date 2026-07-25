@@ -1,13 +1,16 @@
 from pathlib import Path
+from datetime import timedelta, timezone
 
+import jwt
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.security import now_utc
 from app.core.config import get_settings
 from app.core.database import get_engine
 from app.models.audit import AuditLog
-from app.models.file import FileInfo
+from app.models.file import FileInfo, FileTag, FileTagRel
 
 
 def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers: dict[str, str]) -> None:
@@ -157,6 +160,222 @@ def test_file_remark_can_be_saved_and_cleared(
         assert db.execute(stmt).scalars().first() is not None
 
 
+def test_file_metadata_rename_hidden_summary_tags_and_search(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """文件元数据更新、标签绑定和搜索都遵守隐藏过滤。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("draft.md", b"# Draft\n", "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    update_response = client.patch(
+        f"/api/files/{file_id}",
+        headers=auth_headers,
+        json={
+            "original_name": "renamed.md",
+            "remark": "project alpha",
+            "summary_content": "manual summary",
+            "is_hidden": True,
+        },
+        params={"show_hidden": "true"},
+    )
+    assert update_response.status_code == 200
+    updated = update_response.json()
+    assert updated["original_name"] == "renamed.md"
+    assert updated["logical_path"] == "/renamed.md"
+    assert updated["summary_content"] == "manual summary"
+    assert updated["is_hidden"] is True
+
+    tags_response = client.put(
+        f"/api/files/{file_id}/tags",
+        headers=auth_headers,
+        params={"show_hidden": "true"},
+        json={"tag_names": ["work", "alpha", "work"]},
+    )
+    assert tags_response.status_code == 200
+    assert [tag["tag_name"] for tag in tags_response.json()["tags"]] == ["alpha", "work"]
+
+    hidden_search = client.get("/api/files/search", headers=auth_headers, params={"q": "alpha"})
+    assert hidden_search.status_code == 200
+    assert hidden_search.json()["items"] == []
+
+    visible_search = client.get(
+        "/api/files/search",
+        headers=auth_headers,
+        params={"q": "alpha", "show_hidden": "true"},
+    )
+    assert visible_search.status_code == 200
+    items = visible_search.json()["items"]
+    assert len(items) == 1
+    assert items[0]["file_id"] == file_id
+    assert items[0]["is_hidden"] is True
+
+    with Session(get_engine()) as db:
+        file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
+        assert file_info.original_name == "renamed.md"
+        assert file_info.summary_source == "manual"
+        assert db.execute(select(FileTag).where(FileTag.tag_name == "alpha")).scalar_one_or_none() is not None
+        assert len(db.execute(select(FileTagRel).where(FileTagRel.file_id == file_id)).scalars().all()) == 2
+
+
+def test_image_preview_stream_decrypts_uploaded_content(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """图片预览接口返回解密后的文件内容。"""
+
+    payload = b"\x89PNG\r\n\x1a\nfake-image"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("image.png", payload, "image/png")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    preview_response = client.get(f"/api/files/{file_id}/preview", headers=auth_headers)
+
+    assert preview_response.status_code == 200
+    assert preview_response.headers["content-type"].startswith("image/png")
+    assert preview_response.content == payload
+
+
+def test_unencrypted_video_stream_supports_http_range(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """未加密视频按 HTTP Range 返回浏览器可拖动播放所需的 206 响应。"""
+
+    payload = b"0123456789" * 30
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "false"},
+        files={"file": ("clip.mp4", payload, "video/mp4")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    token_response = client.post(f"/api/files/{file_id}/preview-token", headers=auth_headers)
+    assert token_response.status_code == 200
+    preview_url = token_response.json()["preview_url"]
+
+    stream_response = client.get(preview_url, headers={"Range": "bytes=10-109"})
+
+    assert stream_response.status_code == 206
+    assert stream_response.headers["accept-ranges"] == "bytes"
+    assert stream_response.headers["content-range"] == f"bytes 10-109/{len(payload)}"
+    assert stream_response.headers["content-length"] == "100"
+    assert stream_response.headers["content-type"].startswith("video/mp4")
+    assert stream_response.content == payload[10:110]
+
+
+def test_encrypted_video_stream_supports_cross_chunk_range(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """加密视频 Range 跨越多个加密分块时仍返回正确明文片段。"""
+
+    chunk_size = get_settings().upload_chunk_size
+    payload = bytes((index % 251 for index in range(chunk_size + 512)))
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("encrypted.mp4", payload, "video/mp4")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    token_response = client.post(f"/api/files/{file_id}/preview-token", headers=auth_headers)
+    assert token_response.status_code == 200
+    preview_url = token_response.json()["preview_url"]
+    start = chunk_size - 64
+    end = chunk_size + 127
+
+    stream_response = client.get(preview_url, headers={"Range": f"bytes={start}-{end}"})
+
+    assert stream_response.status_code == 206
+    assert stream_response.headers["content-range"] == f"bytes {start}-{end}/{len(payload)}"
+    assert stream_response.content == payload[start : end + 1]
+
+
+def test_video_stream_token_validation_and_type_checks(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """视频流只接受短时效视频预览 Token，且拒绝非视频文件。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("note.txt", b"plain", "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    assert client.post(f"/api/files/{file_id}/preview-token", headers=auth_headers).status_code == 415
+    assert client.get(f"/api/files/{file_id}/video-stream").status_code == 401
+
+    expired = now_utc() - timedelta(minutes=1)
+    expired_token = jwt.encode(
+        {
+            "sub": "user_admin",
+            "fid": file_id,
+            "purpose": "video_preview",
+            "exp": expired.replace(tzinfo=timezone.utc),
+        },
+        get_settings().effective_jwt_secret,
+        algorithm=get_settings().jwt_algorithm,
+    )
+    assert client.get(f"/api/files/{file_id}/video-stream", params={"token": expired_token}).status_code == 401
+
+    wrong_purpose_token = jwt.encode(
+        {
+            "sub": "user_admin",
+            "fid": file_id,
+            "purpose": "image_preview",
+            "exp": (now_utc() + timedelta(minutes=5)).replace(tzinfo=timezone.utc),
+        },
+        get_settings().effective_jwt_secret,
+        algorithm=get_settings().jwt_algorithm,
+    )
+    assert client.get(f"/api/files/{file_id}/video-stream", params={"token": wrong_purpose_token}).status_code == 401
+
+
+def test_hidden_video_preview_token_respects_visibility_flag(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏视频默认不能签发播放 Token，显式显示隐藏内容后才可播放。"""
+
+    payload = b"hidden-video"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "is_hidden": "true"},
+        files={"file": ("hidden.mp4", payload, "video/mp4")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    hidden_token_response = client.post(f"/api/files/{file_id}/preview-token", headers=auth_headers)
+    assert hidden_token_response.status_code == 404
+
+    visible_token_response = client.post(
+        f"/api/files/{file_id}/preview-token",
+        headers=auth_headers,
+        params={"show_hidden": "true"},
+    )
+    assert visible_token_response.status_code == 200
+    stream_response = client.get(visible_token_response.json()["preview_url"], headers={"Range": "bytes=0-5"})
+    assert stream_response.status_code == 206
+    assert stream_response.content == payload[:6]
+
+
 def test_file_can_be_moved_and_deleted(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
@@ -258,5 +477,51 @@ def test_non_markdown_file_still_rejects_markdown_read(
     file_id = upload_response.json()["file_id"]
 
     read_response = client.get(f"/api/files/{file_id}/markdown", headers=auth_headers)
+
+    assert read_response.status_code == 415
+
+
+def test_plain_text_file_can_be_read_after_decryption(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """普通文本文件可以进入只读查看接口，Markdown 专用接口仍保持收窄。"""
+
+    content = "第一行\nplain text\n"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("note.txt", content.encode("utf-8"), "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    markdown_response = client.get(f"/api/files/{file_id}/markdown", headers=auth_headers)
+    assert markdown_response.status_code == 415
+
+    text_response = client.get(f"/api/files/{file_id}/text", headers=auth_headers)
+
+    assert text_response.status_code == 200
+    body = text_response.json()
+    assert body["file_id"] == file_id
+    assert body["original_name"] == "note.txt"
+    assert body["content"] == content
+
+
+def test_non_text_file_rejects_text_read(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """图片等非文本类型不能通过文本读取接口误读。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("image.png", b"not-a-real-png", "image/png")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    read_response = client.get(f"/api/files/{file_id}/text", headers=auth_headers)
 
     assert read_response.status_code == 415
