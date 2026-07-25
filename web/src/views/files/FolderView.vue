@@ -896,7 +896,7 @@ onBeforeUnmount(() => {
     <el-dialog v-model="mergeDocumentVisible" title="合并为新文档" width="460px">
       <el-form label-position="top">
         <el-form-item label="已选文档">
-          <span class="muted">{{ selectedDocumentFiles.length }} 个文档</span>
+          <span class="muted">{{ selectedDocumentFiles.length }} 个文档，将按原始文件名升序合并</span>
         </el-form-item>
         <el-form-item label="目标格式">
           <el-select v-model="mergeDocumentForm.target_format">

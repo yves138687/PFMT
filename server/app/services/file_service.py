@@ -616,6 +616,7 @@ class FileService:
         if parent_path is None:
             raise NotFoundError("文件不存在")
 
+        source_files.sort(key=lambda item: item[0].original_name.lower())
         merged_content = self._merge_document_contents(source_files, payload.target_format)
         target_name = payload.target_name or f"合并文档{document_format_extension(payload.target_format)}"
         target_ext = normalize_extension(target_name)

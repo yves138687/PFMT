@@ -669,10 +669,10 @@ def test_document_convert_creates_new_file_and_keeps_source(
     assert "<h1>Title</h1>" in converted_document.json()["content"]
 
 
-def test_document_merge_creates_new_markdown_in_selected_order(
+def test_document_merge_creates_new_markdown_by_original_name_order(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    """批量合并按传入顺序生成新 Markdown 文档，并保留源文件。"""
+    """批量合并按原始文件名升序生成新 Markdown 文档，并保留源文件。"""
 
     first = client.post(
         "/api/files/upload",
@@ -708,7 +708,7 @@ def test_document_merge_creates_new_markdown_in_selected_order(
     merged_document = client.get(f"/api/files/{merged['file_id']}/document", headers=auth_headers)
     assert merged_document.status_code == 200
     content = merged_document.json()["content"]
-    assert content.index("# b.txt") < content.index("# a.md")
+    assert content.index("# a.md") < content.index("# b.txt")
     assert "two" in content
     assert "# A" in content
 

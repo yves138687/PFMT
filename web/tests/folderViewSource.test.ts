@@ -62,6 +62,7 @@ describe('FolderView source contract', () => {
     expect(source).toContain('mergeSelectedDocuments')
     expect(source).toContain('filesApi.mergeDocuments')
     expect(source).toContain('selectedDocumentFiles')
+    expect(source).toContain('按原始文件名升序合并')
     expect(source).toContain("name: 'document'")
   })
 
