@@ -208,6 +208,110 @@ describe('filesApi', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
   })
 
+  it('reads saves and converts unified documents without visibility query', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          file_id: 'file_1',
+          original_name: 'note.md',
+          mime_type: 'text/markdown',
+          size_bytes: 10,
+          document_format: 'markdown',
+          content: '# Note',
+          editable: true,
+          rendered_html: '<h1>Note</h1>'
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          file_id: 'file_1',
+          original_name: 'note.md',
+          mime_type: 'text/markdown',
+          size_bytes: 12,
+          document_format: 'markdown',
+          content: '# Saved',
+          editable: true,
+          rendered_html: '<h1>Saved</h1>'
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            file_id: 'file_2',
+            path_id: 'root',
+            original_name: 'note.html',
+            logical_path: '/note.html',
+            file_type: 'text',
+            size_bytes: 18,
+            encryption_enabled: true,
+            is_hidden: false,
+            visibility_type: 'normal',
+            status: 'active',
+            created_at: '2026-07-24T00:00:00',
+            updated_at: '2026-07-24T00:00:00'
+          },
+          201
+        )
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            file_id: 'file_3',
+            path_id: 'root',
+            original_name: 'merged.md',
+            logical_path: '/merged.md',
+            file_type: 'text',
+            size_bytes: 30,
+            encryption_enabled: true,
+            is_hidden: false,
+            visibility_type: 'normal',
+            status: 'active',
+            created_at: '2026-07-24T00:00:00',
+            updated_at: '2026-07-24T00:00:00'
+          },
+          201
+        )
+      )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.getDocument('file_1', true)
+    await filesApi.saveDocument('file_1', { document_format: 'markdown', content: '# Saved' }, true)
+    await filesApi.convertDocument('file_1', { target_format: 'html', target_name: 'note.html' }, true)
+    await filesApi.mergeDocuments(
+      {
+        file_ids: ['file_1', 'file_2'],
+        target_format: 'markdown',
+        target_name: 'merged.md'
+      },
+      true
+    )
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/document')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe('PUT')
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
+      document_format: 'markdown',
+      content: '# Saved'
+    })
+    expect(String(fetchMock.mock.calls[2][0])).toContain('/api/files/file_1/convert')
+    expect(String(fetchMock.mock.calls[2][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({
+      target_format: 'html',
+      target_name: 'note.html'
+    })
+    expect(String(fetchMock.mock.calls[3][0])).toContain('/api/files/merge')
+    expect(String(fetchMock.mock.calls[3][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[3][1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string)).toEqual({
+      file_ids: ['file_1', 'file_2'],
+      target_format: 'markdown',
+      target_name: 'merged.md'
+    })
+  })
+
   it('moves file with target path body', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

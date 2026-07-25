@@ -115,6 +115,23 @@ class FileRepository:
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 
+    def update_content_metadata(
+        self,
+        file_info: FileInfo,
+        *,
+        size_bytes: int,
+        checksum_sha256: str,
+        key_wrap_version: str | None,
+        user_id: str,
+    ) -> None:
+        """更新文件本体变化后的元数据。"""
+
+        file_info.size_bytes = size_bytes
+        file_info.checksum_sha256 = checksum_sha256
+        file_info.key_wrap_version = key_wrap_version
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
     def move_to_path(self, file_info: FileInfo, *, path_id: str, visibility_type: str, user_id: str) -> None:
         """移动文件到新的业务目录。"""
 

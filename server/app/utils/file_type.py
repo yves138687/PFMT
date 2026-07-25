@@ -3,6 +3,8 @@ from pathlib import Path
 
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 MARKDOWN_MIME_TYPES = {"text/markdown", "text/x-markdown"}
+HTML_EXTENSIONS = {".html", ".htm"}
+HTML_MIME_TYPES = {"text/html", "application/xhtml+xml"}
 TEXT_EXTENSIONS = {
     ".txt",
     ".log",
@@ -15,6 +17,16 @@ TEXT_EXTENSIONS = {
     ".ini",
     ".conf",
     ".env",
+}
+DOCUMENT_FORMAT_EXTENSIONS = {
+    "plain_text": ".txt",
+    "markdown": ".md",
+    "html": ".html",
+}
+DOCUMENT_FORMAT_MIME_TYPES = {
+    "plain_text": "text/plain",
+    "markdown": "text/markdown",
+    "html": "text/html",
 }
 
 
@@ -62,3 +74,25 @@ def is_text_file(file_ext: str | None, mime_type: str | None, file_type: str | N
         or normalized_ext in TEXT_EXTENSIONS
         or normalized_mime.startswith("text/")
     )
+
+
+def detect_document_format(file_ext: str | None, mime_type: str | None) -> str | None:
+    """将文本型文件收敛为统一文档格式。"""
+
+    normalized_ext = (file_ext or "").lower()
+    normalized_mime = (mime_type or "").lower()
+    if normalized_ext in MARKDOWN_EXTENSIONS or normalized_mime in MARKDOWN_MIME_TYPES:
+        return "markdown"
+    if normalized_ext in HTML_EXTENSIONS or normalized_mime in HTML_MIME_TYPES:
+        return "html"
+    if normalized_ext in TEXT_EXTENSIONS or normalized_mime.startswith("text/"):
+        return "plain_text"
+    return None
+
+
+def document_format_extension(document_format: str) -> str:
+    return DOCUMENT_FORMAT_EXTENSIONS[document_format]
+
+
+def document_format_mime_type(document_format: str) -> str:
+    return DOCUMENT_FORMAT_MIME_TYPES[document_format]

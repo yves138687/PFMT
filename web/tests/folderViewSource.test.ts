@@ -56,6 +56,15 @@ describe('FolderView source contract', () => {
     expect(source).not.toContain('openMoveFile(row)')
   })
 
+  it('supports merging selected documents into a new file', () => {
+    expect(source).toContain('合并文档')
+    expect(source).toContain('openMergeSelectedDocuments')
+    expect(source).toContain('mergeSelectedDocuments')
+    expect(source).toContain('filesApi.mergeDocuments')
+    expect(source).toContain('selectedDocumentFiles')
+    expect(source).toContain("name: 'document'")
+  })
+
   it('offers local metadata filters without exposing hidden content by default', () => {
     expect(source).toContain('筛选文件名、备注、摘要')
     expect(source).toContain('标签筛选')

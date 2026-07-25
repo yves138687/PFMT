@@ -107,6 +107,79 @@ class StorageService:
             key_wrap_version=KEY_WRAP_VERSION if encryption_enabled else None,
         )
 
+    def save_bytes(
+        self,
+        *,
+        content: bytes,
+        file_id: str,
+        encryption_enabled: bool,
+    ) -> StoredObject:
+        """将服务内部生成的内容写入新的随机存储对象。"""
+
+        object_name = f"{uuid4().hex}.pfmt"
+        shard = object_name[:2]
+        relative_path = Path("objects") / shard / object_name
+        final_path = self.storage_root / relative_path
+        self._write_bytes_to_path(
+            content=content,
+            file_id=file_id,
+            encryption_enabled=encryption_enabled,
+            final_path=final_path,
+        )
+        return StoredObject(
+            storage_object_name=object_name,
+            storage_path=relative_path.as_posix(),
+            size_bytes=len(content),
+            checksum_sha256=hashlib.sha256(content).hexdigest(),
+            key_wrap_version=KEY_WRAP_VERSION if encryption_enabled else None,
+        )
+
+    def replace_file_content(self, *, file_info: FileInfo, content: bytes) -> StoredObject:
+        """原子替换现有文件对象内容，保留存储对象名和相对路径。"""
+
+        final_path = self._absolute_object_path(file_info.storage_path)
+        self._write_bytes_to_path(
+            content=content,
+            file_id=file_info.file_id,
+            encryption_enabled=file_info.encryption_enabled,
+            final_path=final_path,
+        )
+        return StoredObject(
+            storage_object_name=file_info.storage_object_name,
+            storage_path=file_info.storage_path,
+            size_bytes=len(content),
+            checksum_sha256=hashlib.sha256(content).hexdigest(),
+            key_wrap_version=KEY_WRAP_VERSION if file_info.encryption_enabled else None,
+        )
+
+    def _write_bytes_to_path(
+        self,
+        *,
+        content: bytes,
+        file_id: str,
+        encryption_enabled: bool,
+        final_path: Path,
+    ) -> None:
+        chunk_size = max(64 * 1024, self.settings.upload_chunk_size)
+        temp_path = final_path.with_suffix(final_path.suffix + ".tmp")
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        file_key = derive_file_key(load_master_key(self.settings), file_id) if encryption_enabled else None
+
+        try:
+            with temp_path.open("wb") as output:
+                if encryption_enabled:
+                    output.write(build_header(chunk_size))
+                for chunk_index, start in enumerate(range(0, len(content), chunk_size)):
+                    chunk = content[start : start + chunk_size]
+                    if encryption_enabled and file_key is not None:
+                        output.write(encrypt_chunk(file_key, file_id, chunk_index, chunk))
+                    else:
+                        output.write(chunk)
+            temp_path.replace(final_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
+
     def iter_content_chunks(self, file_info: FileInfo) -> Iterator[bytes]:
         """根据文件元数据流式读取明文内容。"""
 

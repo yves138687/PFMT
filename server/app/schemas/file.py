@@ -3,6 +3,9 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 
+DocumentFormat = str
+
+
 class FileTagItem(BaseModel):
     """文件标签响应。"""
 
@@ -112,6 +115,95 @@ class TextReadResponse(BaseModel):
     size_bytes: int
     encoding: str = "utf-8"
     content: str
+
+
+class DocumentReadResponse(BaseModel):
+    """统一文档读取响应，覆盖纯文本、Markdown 和 HTML。"""
+
+    file_id: str
+    original_name: str
+    mime_type: str | None
+    size_bytes: int
+    encoding: str = "utf-8"
+    document_format: DocumentFormat
+    content: str
+    editable: bool = True
+    rendered_html: str | None = None
+
+
+class DocumentSaveRequest(BaseModel):
+    """保存当前文档内容，格式必须与文件当前格式一致。"""
+
+    content: str = Field(max_length=5 * 1024 * 1024)
+    document_format: DocumentFormat
+
+    @field_validator("document_format")
+    @classmethod
+    def validate_document_format(cls, value: str) -> str:
+        if value not in {"plain_text", "markdown", "html"}:
+            raise ValueError("不支持的文档格式")
+        return value
+
+
+class DocumentConvertRequest(BaseModel):
+    """将当前文档转换为新文件。"""
+
+    target_format: DocumentFormat
+    target_name: str | None = Field(default=None, min_length=1, max_length=512)
+
+    @field_validator("target_format")
+    @classmethod
+    def validate_target_format(cls, value: str) -> str:
+        if value not in {"plain_text", "markdown", "html"}:
+            raise ValueError("不支持的目标格式")
+        return value
+
+    @field_validator("target_name")
+    @classmethod
+    def validate_target_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("目标文件名不能为空")
+        if "/" in normalized or "\\" in normalized:
+            raise ValueError("目标文件名不能包含路径分隔符")
+        return normalized
+
+
+class DocumentMergeRequest(BaseModel):
+    """将多个文档合并为新文件。"""
+
+    file_ids: list[str] = Field(min_length=2, max_length=50)
+    target_format: DocumentFormat = "markdown"
+    target_name: str | None = Field(default=None, min_length=1, max_length=512)
+
+    @field_validator("file_ids")
+    @classmethod
+    def validate_file_ids(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value if item.strip()]
+        if len(normalized) < 2:
+            raise ValueError("至少选择两个文档")
+        return normalized
+
+    @field_validator("target_format")
+    @classmethod
+    def validate_target_format(cls, value: str) -> str:
+        if value not in {"plain_text", "markdown", "html"}:
+            raise ValueError("不支持的目标格式")
+        return value
+
+    @field_validator("target_name")
+    @classmethod
+    def validate_target_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("目标文件名不能为空")
+        if "/" in normalized or "\\" in normalized:
+            raise ValueError("目标文件名不能包含路径分隔符")
+        return normalized
 
 
 class FilePreviewTokenResponse(BaseModel):

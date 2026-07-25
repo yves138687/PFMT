@@ -1,5 +1,8 @@
 import logging
+import re
 from datetime import timedelta, timezone
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any
@@ -19,6 +22,10 @@ from app.repositories.file_repository import FileRepository, FileTagRepository
 from app.repositories.path_repository import PathRepository
 from app.repositories.session_repository import SessionRepository
 from app.schemas.file import (
+    DocumentConvertRequest,
+    DocumentMergeRequest,
+    DocumentReadResponse,
+    DocumentSaveRequest,
     FileDetailResponse,
     FileListItem,
     FileMoveRequest,
@@ -35,8 +42,35 @@ from app.schemas.file import (
 from app.services.audit_service import AuditService
 from app.services.setting_service import SettingService
 from app.services.storage_service import ContentRange, StorageService, StoredObject
-from app.utils.file_type import detect_file_type, is_markdown_file, is_text_file, normalize_extension
+from app.utils.file_type import (
+    detect_document_format,
+    detect_file_type,
+    document_format_extension,
+    document_format_mime_type,
+    is_markdown_file,
+    is_text_file,
+    normalize_extension,
+)
 from app.utils.ids import new_business_id
+
+
+class _PlainTextExtractor(HTMLParser):
+    """从 HTML 中提取用于 plain text / Markdown 转换的可读文本。"""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    def text(self) -> str:
+        lines = [line.strip() for line in "".join(self.parts).splitlines()]
+        return "\n".join(line for line in lines if line)
 
 
 class FileService:
@@ -324,6 +358,306 @@ class FileService:
                 target_id=file_id,
                 result="failed",
                 detail={"reason": "read_failed"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
+    def read_document(
+        self,
+        *,
+        file_id: str,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> DocumentReadResponse:
+        """统一读取可编辑文档，覆盖纯文本、Markdown 和 HTML。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="read_document",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        document_format = detect_document_format(file_info.file_ext, file_info.mime_type)
+        if not document_format or not is_text_file(file_info.file_ext, file_info.mime_type, file_info.file_type):
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="read_document",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("当前文件类型暂不支持文档编辑")
+
+        try:
+            content = self._read_text_content(file_info, too_large_message="文档超过当前读取上限")
+            self.repository.mark_accessed(file_info)
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="read_document",
+                target_type="file",
+                target_id=file_id,
+                result="success",
+                detail={"document_format": document_format, "size_bytes": file_info.size_bytes},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            return DocumentReadResponse(
+                file_id=file_info.file_id,
+                original_name=file_info.original_name,
+                mime_type=file_info.mime_type,
+                size_bytes=file_info.size_bytes,
+                document_format=document_format,
+                content=content,
+                rendered_html=self._render_document_html(content, document_format),
+            )
+        except Exception:
+            self.db.rollback()
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="read_document",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "read_failed"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
+    def save_document(
+        self,
+        *,
+        file_id: str,
+        payload: DocumentSaveRequest,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> DocumentReadResponse:
+        """保存统一文档内容，保持当前文件格式不变。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="save_document",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        document_format = detect_document_format(file_info.file_ext, file_info.mime_type)
+        if document_format is None or document_format != payload.document_format:
+            self._record_file_action_failure(
+                user_id=current_user.user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type="save_document",
+                reason="document_format_mismatch",
+            )
+            raise UnsupportedFileTypeError("保存格式必须与当前文件格式一致")
+
+        content_bytes = payload.content.encode("utf-8")
+        if len(content_bytes) > self.settings.markdown_read_max_bytes:
+            raise PayloadTooLargeError("文档超过当前保存上限")
+        try:
+            stored_object = self.storage_service.replace_file_content(file_info=file_info, content=content_bytes)
+            self.repository.update_content_metadata(
+                file_info,
+                size_bytes=stored_object.size_bytes,
+                checksum_sha256=stored_object.checksum_sha256,
+                key_wrap_version=stored_object.key_wrap_version,
+                user_id=current_user.user_id,
+            )
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="save_document",
+                target_type="file",
+                target_id=file_id,
+                result="success",
+                detail={"document_format": document_format, "size_bytes": stored_object.size_bytes},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            self.db.refresh(file_info)
+            return DocumentReadResponse(
+                file_id=file_info.file_id,
+                original_name=file_info.original_name,
+                mime_type=file_info.mime_type,
+                size_bytes=file_info.size_bytes,
+                document_format=document_format,
+                content=payload.content,
+                rendered_html=self._render_document_html(payload.content, document_format),
+            )
+        except Exception:
+            self.db.rollback()
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="save_document",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "save_failed"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
+    def convert_document(
+        self,
+        *,
+        file_id: str,
+        payload: DocumentConvertRequest,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileDetailResponse:
+        """将文档转换为新文件，默认不覆盖原文件。"""
+
+        file_info, parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="convert_document",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        source_format = detect_document_format(file_info.file_ext, file_info.mime_type)
+        if source_format is None:
+            self._record_file_action_failure(
+                user_id=current_user.user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type="convert_document",
+                reason="unsupported_file_type",
+            )
+            raise UnsupportedFileTypeError("当前文件类型暂不支持转换")
+
+        source_content = self._read_text_content(file_info, too_large_message="文档超过当前转换上限")
+        converted_content = self._convert_document_content(source_content, source_format, payload.target_format)
+        target_name = payload.target_name or self._default_converted_name(file_info.original_name, payload.target_format)
+        target_ext = normalize_extension(target_name)
+        expected_ext = document_format_extension(payload.target_format)
+        if target_ext != expected_ext:
+            target_name = f"{Path(target_name).stem}{expected_ext}"
+        converted_file: FileInfo | None = None
+        try:
+            converted_file = self._create_generated_document_file(
+                path_id=file_info.path_id,
+                target_name=target_name,
+                target_format=payload.target_format,
+                content=converted_content,
+                current_user=current_user,
+                source_file=file_info,
+            )
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="convert_document",
+                target_type="file",
+                target_id=converted_file.file_id,
+                result="success",
+                detail={"source_file_id": file_id, "source_format": source_format, "target_format": payload.target_format},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            self.db.refresh(converted_file)
+            return self._to_detail_response(converted_file, parent_path)
+        except Exception:
+            self.db.rollback()
+            if converted_file is not None:
+                self.storage_service.delete_object(converted_file.storage_path)
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="convert_document",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "convert_failed"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
+    def merge_documents(
+        self,
+        *,
+        payload: DocumentMergeRequest,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileDetailResponse:
+        """按传入顺序将多个统一文档合并为同目录新文件。"""
+
+        source_files: list[tuple[FileInfo, str, str]] = []
+        parent_path: FilePath | None = None
+        for file_id in payload.file_ids:
+            file_info, current_parent_path = self._get_visible_file_and_path(
+                file_id=file_id,
+                show_hidden=show_hidden,
+                action_type="merge_documents",
+                current_user=current_user,
+                client_ip=client_ip,
+            )
+            source_format = detect_document_format(file_info.file_ext, file_info.mime_type)
+            if source_format is None:
+                self._record_file_action_failure(
+                    user_id=current_user.user_id,
+                    client_ip=client_ip,
+                    file_id=file_id,
+                    action_type="merge_documents",
+                    reason="unsupported_file_type",
+                )
+                raise UnsupportedFileTypeError("只能合并文本、Markdown 或 HTML 文档")
+            content = self._read_text_content(file_info, too_large_message="文档超过当前合并上限")
+            source_files.append((file_info, source_format, content))
+            parent_path = parent_path or current_parent_path
+
+        if parent_path is None:
+            raise NotFoundError("文件不存在")
+
+        merged_content = self._merge_document_contents(source_files, payload.target_format)
+        target_name = payload.target_name or f"合并文档{document_format_extension(payload.target_format)}"
+        target_ext = normalize_extension(target_name)
+        expected_ext = document_format_extension(payload.target_format)
+        if target_ext != expected_ext:
+            target_name = f"{Path(target_name).stem}{expected_ext}"
+
+        merged_file: FileInfo | None = None
+        try:
+            merged_file = self._create_generated_document_file(
+                path_id=parent_path.path_id,
+                target_name=target_name,
+                target_format=payload.target_format,
+                content=merged_content,
+                current_user=current_user,
+            )
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="merge_documents",
+                target_type="file",
+                target_id=merged_file.file_id,
+                result="success",
+                detail={
+                    "source_file_ids": payload.file_ids,
+                    "target_format": payload.target_format,
+                    "source_count": len(source_files),
+                },
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            self.db.refresh(merged_file)
+            return self._to_detail_response(merged_file, parent_path)
+        except Exception:
+            self.db.rollback()
+            if merged_file is not None:
+                self.storage_service.delete_object(merged_file.storage_path)
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="merge_documents",
+                target_type="file",
+                result="failed",
+                detail={"reason": "merge_failed", "source_file_ids": payload.file_ids},
                 client_ip=client_ip,
             )
             self.db.commit()
@@ -975,6 +1309,144 @@ class FileService:
             return bytes(content_bytes).decode("utf-8-sig")
         except UnicodeDecodeError:
             return bytes(content_bytes).decode("utf-8", errors="replace")
+
+    def _convert_document_content(self, content: str, source_format: str, target_format: str) -> str:
+        if source_format == target_format:
+            return content
+        if target_format == "plain_text":
+            return self._document_to_plain_text(content, source_format)
+        if target_format == "html":
+            return self._render_document_html(content, source_format) or ""
+        if target_format == "markdown":
+            if source_format == "html":
+                return self._document_to_plain_text(content, source_format)
+            return content
+        raise UnsupportedFileTypeError("不支持的目标格式")
+
+    def _merge_document_contents(
+        self,
+        source_files: list[tuple[FileInfo, str, str]],
+        target_format: str,
+    ) -> str:
+        sections: list[str] = []
+        for file_info, source_format, content in source_files:
+            converted_content = self._convert_document_content(content, source_format, target_format).strip()
+            if target_format == "html":
+                sections.append(
+                    f'<section data-source-file-id="{escape(file_info.file_id)}">'
+                    f"<h1>{escape(file_info.original_name)}</h1>\n{converted_content}</section>"
+                )
+            elif target_format == "markdown":
+                sections.append(f"# {file_info.original_name}\n\n{converted_content}")
+            else:
+                sections.append(f"{file_info.original_name}\n\n{converted_content}")
+        separator = "\n\n---\n\n" if target_format == "markdown" else "\n\n"
+        return separator.join(sections).strip() + "\n"
+
+    def _create_generated_document_file(
+        self,
+        *,
+        path_id: str,
+        target_name: str,
+        target_format: str,
+        content: str,
+        current_user: UserAccount,
+        source_file: FileInfo | None = None,
+    ) -> FileInfo:
+        target_file_id = new_business_id("file")
+        should_encrypt = self.setting_service.get_bool("storage.encryption_enabled", True)
+        stored_object = self.storage_service.save_bytes(
+            content=content.encode("utf-8"),
+            file_id=target_file_id,
+            encryption_enabled=should_encrypt,
+        )
+        return self.repository.create(
+            FileInfo(
+                file_id=target_file_id,
+                path_id=path_id,
+                original_name=target_name,
+                storage_object_name=stored_object.storage_object_name,
+                storage_path=stored_object.storage_path,
+                storage_provider="local",
+                mime_type=document_format_mime_type(target_format),
+                file_ext=document_format_extension(target_format),
+                file_type="text",
+                size_bytes=stored_object.size_bytes,
+                checksum_sha256=stored_object.checksum_sha256,
+                encryption_enabled=should_encrypt,
+                key_wrap_version=stored_object.key_wrap_version,
+                remark=source_file.remark if source_file else None,
+                summary_content=source_file.summary_content if source_file else None,
+                summary_source=source_file.summary_source if source_file else None,
+                summary_updated_at=source_file.summary_updated_at if source_file else None,
+                is_hidden=source_file.is_hidden if source_file else False,
+                visibility_type=source_file.visibility_type if source_file else "normal",
+                created_by=current_user.user_id,
+                updated_by=current_user.user_id,
+            )
+        )
+
+    @staticmethod
+    def _document_to_plain_text(content: str, source_format: str) -> str:
+        if source_format == "html":
+            parser = _PlainTextExtractor()
+            parser.feed(content)
+            return parser.text()
+        if source_format == "markdown":
+            text = re.sub(r"```.*?```", "", content, flags=re.S)
+            text = re.sub(r"`([^`]*)`", r"\1", text)
+            text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+            text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+            text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.M)
+            text = re.sub(r"[*_~>#-]+", "", text)
+            return "\n".join(line.rstrip() for line in text.splitlines()).strip()
+        return content
+
+    @staticmethod
+    def _render_document_html(content: str, document_format: str) -> str | None:
+        if document_format == "html":
+            return content
+        if document_format == "plain_text":
+            paragraphs = escape(content).splitlines() or [""]
+            return "\n".join(f"<p>{line}</p>" if line else "<p><br></p>" for line in paragraphs)
+        if document_format == "markdown":
+            html_lines: list[str] = []
+            in_list = False
+            for raw_line in content.splitlines():
+                line = raw_line.strip()
+                if not line:
+                    if in_list:
+                        html_lines.append("</ul>")
+                        in_list = False
+                    continue
+                heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+                if heading:
+                    if in_list:
+                        html_lines.append("</ul>")
+                        in_list = False
+                    level = len(heading.group(1))
+                    html_lines.append(f"<h{level}>{escape(heading.group(2))}</h{level}>")
+                    continue
+                list_item = re.match(r"^[-*]\s+(.+)$", line)
+                if list_item:
+                    if not in_list:
+                        html_lines.append("<ul>")
+                        in_list = True
+                    html_lines.append(f"<li>{escape(list_item.group(1))}</li>")
+                    continue
+                if in_list:
+                    html_lines.append("</ul>")
+                    in_list = False
+                html_lines.append(f"<p>{escape(line)}</p>")
+            if in_list:
+                html_lines.append("</ul>")
+            return "\n".join(html_lines)
+        return None
+
+    @staticmethod
+    def _default_converted_name(original_name: str, target_format: str) -> str:
+        stem = Path(original_name).stem or "document"
+        return f"{stem}{document_format_extension(target_format)}"
 
     def _path_visible_for_file(self, file_info: FileInfo, *, include_hidden: bool) -> bool:
         parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)

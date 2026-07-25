@@ -9,7 +9,7 @@ onMounted(() => {
   const fileId = route.params.fileId
   if (typeof fileId === 'string' && fileId) {
     void router.replace({
-      name: 'file-detail',
+      name: 'document',
       params: {
         fileId
       },
@@ -29,7 +29,7 @@ onMounted(() => {
 
 <template>
   <section class="page-shell markdown-redirect">
-    <el-empty description="正在打开文件详情" />
+    <el-empty description="正在打开文档" />
   </section>
 </template>
 

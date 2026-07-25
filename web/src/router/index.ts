@@ -49,6 +49,15 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'document/:fileId',
+        name: 'document',
+        component: () => import('@/views/documents/DocumentView.vue'),
+        meta: {
+          title: '文档',
+          requiresAuth: true
+        }
+      },
+      {
         path: 'markdown/:fileId?',
         name: 'markdown',
         component: () => import('@/views/markdown/MarkdownView.vue'),

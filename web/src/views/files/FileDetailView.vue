@@ -116,6 +116,18 @@ async function loadFileDetail() {
   try {
     await ensureSettingsLoaded()
     detail.value = await filesApi.getFileDetail(fileId.value, settingsStore.showHiddenContent)
+    if (detail.value.file_type === 'text') {
+      void router.replace({
+        name: 'document',
+        params: {
+          fileId: detail.value.file_id
+        },
+        query: {
+          pathId: fromPathId.value ?? detail.value.path_id
+        }
+      })
+      return
+    }
     await loadMarkdown()
     await loadText()
     await loadPreviewBlob()

@@ -548,6 +548,231 @@ def test_plain_text_file_can_be_read_after_decryption(
     assert body["content"] == content
 
 
+def test_document_endpoint_reads_text_markdown_and_html(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """统一文档接口覆盖 txt、Markdown 和 HTML。"""
+
+    cases = [
+        ("note.txt", "plain text", "text/plain", "plain_text"),
+        ("note.md", "# 标题\n正文", "text/markdown", "markdown"),
+        ("note.html", "<h1>标题</h1><p>正文</p>", "text/html", "html"),
+    ]
+
+    for filename, content, mime_type, expected_format in cases:
+        upload_response = client.post(
+            "/api/files/upload",
+            headers=auth_headers,
+            data={"path_id": "root", "encryption_enabled": "true"},
+            files={"file": (filename, content.encode("utf-8"), mime_type)},
+        )
+        assert upload_response.status_code == 201
+        file_id = upload_response.json()["file_id"]
+
+        document_response = client.get(f"/api/files/{file_id}/document", headers=auth_headers)
+
+        assert document_response.status_code == 200
+        body = document_response.json()
+        assert body["file_id"] == file_id
+        assert body["document_format"] == expected_format
+        assert body["content"] == content
+        assert body["editable"] is True
+        assert body["rendered_html"]
+
+
+def test_document_save_updates_encrypted_content(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """保存统一文档会替换加密对象内容，并更新可读正文和文件大小。"""
+
+    original = "before\n"
+    updated = "after\n第二行"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("editable.txt", original.encode("utf-8"), "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+    old_size = upload_response.json()["size_bytes"]
+
+    save_response = client.put(
+        f"/api/files/{file_id}/document",
+        headers=auth_headers,
+        json={"document_format": "plain_text", "content": updated},
+    )
+
+    assert save_response.status_code == 200
+    body = save_response.json()
+    assert body["content"] == updated
+    assert body["size_bytes"] == len(updated.encode("utf-8"))
+    assert body["size_bytes"] != old_size
+
+    text_response = client.get(f"/api/files/{file_id}/text", headers=auth_headers)
+    assert text_response.status_code == 200
+    assert text_response.json()["content"] == updated
+
+
+def test_hidden_file_cannot_bypass_visibility_through_document_endpoint(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏文件不能通过统一文档接口绕过会话态显示隐藏开关。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "is_hidden": "true"},
+        files={"file": ("hidden.md", b"# hidden", "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    assert client.get(f"/api/files/{file_id}/document", headers=auth_headers).status_code == 404
+
+
+def test_document_convert_creates_new_file_and_keeps_source(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """文档转换默认生成新文件，不覆盖源文件。"""
+
+    content = "# Title\nBody"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("source.md", content.encode("utf-8"), "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    source_file_id = upload_response.json()["file_id"]
+
+    convert_response = client.post(
+        f"/api/files/{source_file_id}/convert",
+        headers=auth_headers,
+        json={"target_format": "html", "target_name": "source-copy.html"},
+    )
+
+    assert convert_response.status_code == 201
+    converted = convert_response.json()
+    assert converted["file_id"] != source_file_id
+    assert converted["original_name"] == "source-copy.html"
+    assert converted["file_ext"] == ".html"
+    assert converted["mime_type"] == "text/html"
+
+    source_document = client.get(f"/api/files/{source_file_id}/document", headers=auth_headers)
+    converted_document = client.get(f"/api/files/{converted['file_id']}/document", headers=auth_headers)
+
+    assert source_document.status_code == 200
+    assert source_document.json()["content"] == content
+    assert converted_document.status_code == 200
+    assert converted_document.json()["document_format"] == "html"
+    assert "<h1>Title</h1>" in converted_document.json()["content"]
+
+
+def test_document_merge_creates_new_markdown_in_selected_order(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """批量合并按传入顺序生成新 Markdown 文档，并保留源文件。"""
+
+    first = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("a.md", b"# A\none", "text/markdown")},
+    )
+    second = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("b.txt", "two".encode("utf-8"), "text/plain")},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    merge_response = client.post(
+        "/api/files/merge",
+        headers=auth_headers,
+        json={
+            "file_ids": [second.json()["file_id"], first.json()["file_id"]],
+            "target_format": "markdown",
+            "target_name": "merged.md",
+        },
+    )
+
+    assert merge_response.status_code == 201
+    merged = merge_response.json()
+    assert merged["original_name"] == "merged.md"
+    assert merged["file_ext"] == ".md"
+    assert merged["mime_type"] == "text/markdown"
+
+    merged_document = client.get(f"/api/files/{merged['file_id']}/document", headers=auth_headers)
+    assert merged_document.status_code == 200
+    content = merged_document.json()["content"]
+    assert content.index("# b.txt") < content.index("# a.md")
+    assert "two" in content
+    assert "# A" in content
+
+    assert client.get(f"/api/files/{first.json()['file_id']}/document", headers=auth_headers).json()["content"] == "# A\none"
+
+
+def test_document_merge_rejects_non_document_file(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """非文档文件不能被批量合并。"""
+
+    text_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("a.txt", b"one", "text/plain")},
+    )
+    image_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("image.png", b"not-a-real-png", "image/png")},
+    )
+    assert text_upload.status_code == 201
+    assert image_upload.status_code == 201
+
+    merge_response = client.post(
+        "/api/files/merge",
+        headers=auth_headers,
+        json={"file_ids": [text_upload.json()["file_id"], image_upload.json()["file_id"]]},
+    )
+
+    assert merge_response.status_code == 415
+
+
+def test_document_merge_respects_hidden_visibility(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏文档不能通过合并接口绕过会话态显示隐藏开关。"""
+
+    visible = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("visible.txt", b"visible", "text/plain")},
+    )
+    hidden = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "is_hidden": "true"},
+        files={"file": ("hidden.txt", b"hidden", "text/plain")},
+    )
+    assert visible.status_code == 201
+    assert hidden.status_code == 201
+
+    merge_response = client.post(
+        "/api/files/merge",
+        headers=auth_headers,
+        json={"file_ids": [visible.json()["file_id"], hidden.json()["file_id"]]},
+    )
+
+    assert merge_response.status_code == 404
+
+
 def test_non_text_file_rejects_text_read(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

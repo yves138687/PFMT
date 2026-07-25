@@ -1,5 +1,9 @@
 import { http } from './http'
 import type {
+  DocumentContent,
+  DocumentConvertPayload,
+  DocumentMergePayload,
+  DocumentSavePayload,
   FileDetail,
   FileInfo,
   FilePreviewToken,
@@ -78,6 +82,18 @@ export const filesApi = {
   },
   issuePreviewToken(fileId: string, _showHidden?: boolean) {
     return http.post<FilePreviewToken>(`/files/${encodeURIComponent(fileId)}/preview-token`)
+  },
+  getDocument(fileId: string, _showHidden?: boolean) {
+    return http.get<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`)
+  },
+  saveDocument(fileId: string, payload: DocumentSavePayload, _showHidden?: boolean) {
+    return http.put<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`, payload)
+  },
+  convertDocument(fileId: string, payload: DocumentConvertPayload, _showHidden?: boolean) {
+    return http.post<FileDetail>(`/files/${encodeURIComponent(fileId)}/convert`, payload)
+  },
+  mergeDocuments(payload: DocumentMergePayload, _showHidden?: boolean) {
+    return http.post<FileDetail>('/files/merge', payload)
   }
 }
 

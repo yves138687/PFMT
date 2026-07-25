@@ -19,7 +19,7 @@ const keyword = computed(() => (typeof route.query.q === 'string' ? route.query.
 
 function openFile(file: FileDetail) {
   void router.push({
-    name: 'file-detail',
+    name: file.file_type === 'text' ? 'document' : 'file-detail',
     params: {
       fileId: file.file_id
     },

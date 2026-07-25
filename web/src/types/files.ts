@@ -1,5 +1,6 @@
 export type FileType = 'text' | 'image' | 'video' | 'pdf' | 'audio' | 'other'
 export type VisibilityType = 'normal' | 'private'
+export type DocumentFormat = 'plain_text' | 'markdown' | 'html'
 
 export interface FileInfo {
   file_id: string
@@ -102,4 +103,32 @@ export interface FilePreviewToken {
   file_id: string
   preview_url: string
   expires_at: string
+}
+
+export interface DocumentContent {
+  file_id: string
+  original_name: string
+  mime_type?: string | null
+  size_bytes: number
+  encoding?: string
+  document_format: DocumentFormat
+  content: string
+  editable: boolean
+  rendered_html?: string | null
+}
+
+export interface DocumentSavePayload {
+  content: string
+  document_format: DocumentFormat
+}
+
+export interface DocumentConvertPayload {
+  target_format: DocumentFormat
+  target_name?: string | null
+}
+
+export interface DocumentMergePayload {
+  file_ids: string[]
+  target_format: DocumentFormat
+  target_name?: string | null
 }

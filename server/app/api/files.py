@@ -9,6 +9,10 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import AppError, AuthenticationError
 from app.models.user import UserAccount
 from app.schemas.file import (
+    DocumentConvertRequest,
+    DocumentMergeRequest,
+    DocumentReadResponse,
+    DocumentSaveRequest,
     FileDetailResponse,
     FileListItem,
     FileMoveRequest,
@@ -177,6 +181,25 @@ def stream_video(
     return StreamingResponse(chunks, status_code=status_code, media_type=media_type, headers=headers)
 
 
+@router.post("/merge", response_model=FileDetailResponse, status_code=status.HTTP_201_CREATED)
+def merge_documents(
+    payload: DocumentMergeRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDetailResponse:
+    """将选中的多个文档合并为同目录新文件。"""
+
+    return FileService(db, settings).merge_documents(
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
 @router.get("/{file_id}", response_model=FileDetailResponse)
 def get_file_detail(
     file_id: str,
@@ -230,6 +253,67 @@ def update_file_remark(
     """更新文件备注，并返回更新后的文件详情。"""
 
     return FileService(db, settings).update_file_remark(
+        file_id=file_id,
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.get("/{file_id}/document", response_model=DocumentReadResponse)
+def read_document(
+    file_id: str,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> DocumentReadResponse:
+    """统一读取纯文本、Markdown 和 HTML 文档。"""
+
+    return FileService(db, settings).read_document(
+        file_id=file_id,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.put("/{file_id}/document", response_model=DocumentReadResponse)
+def save_document(
+    file_id: str,
+    payload: DocumentSaveRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> DocumentReadResponse:
+    """保存当前文档内容，保持原文件格式。"""
+
+    return FileService(db, settings).save_document(
+        file_id=file_id,
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.post("/{file_id}/convert", response_model=FileDetailResponse, status_code=status.HTTP_201_CREATED)
+def convert_document(
+    file_id: str,
+    payload: DocumentConvertRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDetailResponse:
+    """将当前文档转换为同目录新文件。"""
+
+    return FileService(db, settings).convert_document(
         file_id=file_id,
         payload=payload,
         show_hidden=show_hidden,

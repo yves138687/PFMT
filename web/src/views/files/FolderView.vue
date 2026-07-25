@@ -26,7 +26,7 @@ import FilePropertiesDialog from '@/components/FilePropertiesDialog.vue'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
 import { usePathStore } from '@/stores/pathStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import type { FileDetail, FileInfo, FilePathNode } from '@/types/files'
+import type { DocumentFormat, FileDetail, FileInfo, FilePathNode } from '@/types/files'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
 interface PathOption {
@@ -49,6 +49,15 @@ const moveFileVisible = ref(false)
 const moveFileLoading = ref(false)
 const moveFileTargetPathId = ref('root')
 const selectedFiles = ref<FileInfo[]>([])
+const mergeDocumentVisible = ref(false)
+const mergeDocumentLoading = ref(false)
+const mergeDocumentForm = ref<{
+  target_name: string
+  target_format: DocumentFormat
+}>({
+  target_name: '合并文档.md',
+  target_format: 'markdown'
+})
 const movePathVisible = ref(false)
 const movePathLoading = ref(false)
 const movePathTargetParentId = ref('root')
@@ -139,6 +148,10 @@ const videoFiles = computed(() => files.value.filter((file) => file.file_type ==
 const currentVideoFile = computed(() => videoFiles.value[videoPreviewIndex.value] ?? null)
 const canShowPreviousVideo = computed(() => videoPreviewIndex.value > 0)
 const canShowNextVideo = computed(() => videoPreviewIndex.value < videoFiles.value.length - 1)
+const selectedDocumentFiles = computed(() => selectedFiles.value.filter((file) => file.file_type === 'text'))
+const canMergeSelectedDocuments = computed(
+  () => selectedFiles.value.length >= 2 && selectedDocumentFiles.value.length === selectedFiles.value.length
+)
 
 function canOpenPreview(file: FileInfo) {
   return (
@@ -196,6 +209,18 @@ async function openFileDetail(file: FileInfo) {
   }
   if (file.file_type === 'video') {
     await openVideoPreview(file)
+    return
+  }
+  if (file.file_type === 'text') {
+    void router.push({
+      name: 'document',
+      params: {
+        fileId: file.file_id
+      },
+      query: {
+        pathId: currentPathId.value
+      }
+    })
     return
   }
 
@@ -486,8 +511,58 @@ async function openMoveSelectedFiles() {
   moveFileVisible.value = true
 }
 
+function openMergeSelectedDocuments() {
+  if (selectedFiles.value.length < 2) {
+    ElMessage.warning('请至少选择两个文档')
+    return
+  }
+  if (!canMergeSelectedDocuments.value) {
+    ElMessage.warning('只能合并文本、Markdown 或 HTML 文档')
+    return
+  }
+  mergeDocumentForm.value = {
+    target_name: '合并文档.md',
+    target_format: 'markdown'
+  }
+  mergeDocumentVisible.value = true
+}
+
 function handleSelectionChange(selection: FileInfo[]) {
   selectedFiles.value = selection
+}
+
+async function mergeSelectedDocuments() {
+  if (!canMergeSelectedDocuments.value) {
+    ElMessage.warning('请至少选择两个文档')
+    return
+  }
+
+  mergeDocumentLoading.value = true
+  try {
+    const merged = await filesApi.mergeDocuments(
+      {
+        file_ids: selectedFiles.value.map((file) => file.file_id),
+        target_format: mergeDocumentForm.value.target_format,
+        target_name: normalizeOptionalText(mergeDocumentForm.value.target_name)
+      },
+      settingsStore.showHiddenContent
+    )
+    mergeDocumentVisible.value = false
+    selectedFiles.value = []
+    ElMessage.success('已生成合并文档')
+    await loadFiles()
+    void router.push({
+      name: 'document',
+      params: {
+        fileId: merged.file_id
+      },
+      query: {
+        pathId: merged.path_id
+      }
+    })
+  } finally {
+    mergeDocumentLoading.value = false
+  }
 }
 
 async function moveSelectedFiles() {
@@ -749,6 +824,9 @@ onBeforeUnmount(() => {
           <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFiles">
             移动所选
           </el-button>
+          <el-button :icon="DocumentAdd" :disabled="selectedFiles.length < 2" @click="openMergeSelectedDocuments">
+            合并文档
+          </el-button>
           <el-button :icon="Refresh" :loading="loading" @click="loadFiles">刷新</el-button>
           <el-segmented :model-value="'list'" :options="['list', 'grid']" disabled />
         </div>
@@ -814,6 +892,30 @@ onBeforeUnmount(() => {
       :target-full-path="selectedPath.full_path"
       @uploaded="handleUploadCompleted"
     />
+
+    <el-dialog v-model="mergeDocumentVisible" title="合并为新文档" width="460px">
+      <el-form label-position="top">
+        <el-form-item label="已选文档">
+          <span class="muted">{{ selectedDocumentFiles.length }} 个文档</span>
+        </el-form-item>
+        <el-form-item label="目标格式">
+          <el-select v-model="mergeDocumentForm.target_format">
+            <el-option label="Markdown" value="markdown" />
+            <el-option label="纯文本" value="plain_text" />
+            <el-option label="HTML" value="html" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="新文件名">
+          <el-input v-model="mergeDocumentForm.target_name" maxlength="512" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="mergeDocumentVisible = false">取消</el-button>
+        <el-button type="primary" :loading="mergeDocumentLoading" @click="mergeSelectedDocuments">
+          生成合并文档
+        </el-button>
+      </template>
+    </el-dialog>
 
     <Teleport to="body">
       <div v-if="imagePreviewVisible" class="image-viewer">
