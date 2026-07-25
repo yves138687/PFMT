@@ -12,7 +12,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('filesApi', () => {
-  it('reads file detail with show_hidden query', async () => {
+  it('reads file detail without visibility query', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
         file_id: 'file_1',
@@ -33,7 +33,8 @@ describe('filesApi', () => {
 
     await filesApi.getFileDetail('file_1', true)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
   })
 
@@ -60,7 +61,8 @@ describe('filesApi', () => {
     await filesApi.updateFileRemark('file_1', '备注', false)
 
     const init = fetchMock.mock.calls[0][1] as RequestInit
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1?show_hidden=false')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect(init.method).toBe('PATCH')
     expect(JSON.parse(init.body as string)).toEqual({ remark: '备注' })
   })
@@ -97,7 +99,8 @@ describe('filesApi', () => {
     )
 
     const init = fetchMock.mock.calls[0][1] as RequestInit
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect(init.method).toBe('PATCH')
     expect(JSON.parse(init.body as string)).toEqual({
       original_name: 'renamed.md',
@@ -112,7 +115,8 @@ describe('filesApi', () => {
 
     await filesApi.searchFiles('alpha', false)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/search?q=alpha&show_hidden=false&limit=50')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/search?q=alpha&limit=50')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
   })
 
@@ -142,9 +146,11 @@ describe('filesApi', () => {
     await filesApi.updateFileTags('file_1', ['work'], true)
     await filesApi.getPreviewBlob('file_1', true)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/tags?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/tags')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({ tag_names: ['work'] })
-    expect(String(fetchMock.mock.calls[1][0])).toContain('/api/files/file_1/preview?show_hidden=true')
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/api/files/file_1/preview')
+    expect(String(fetchMock.mock.calls[1][0])).not.toContain('show_hidden')
   })
 
   it('reads markdown content without manual follow-up action', async () => {
@@ -161,7 +167,8 @@ describe('filesApi', () => {
 
     await filesApi.getMarkdownFile('file_1', true)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/markdown?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/markdown')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
   })
 
@@ -179,7 +186,8 @@ describe('filesApi', () => {
 
     await filesApi.getTextFile('file_1', true)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/text?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/text')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
   })
 
@@ -195,7 +203,8 @@ describe('filesApi', () => {
 
     await filesApi.issuePreviewToken('file_1', true)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/preview-token?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/preview-token')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
   })
 
@@ -221,18 +230,20 @@ describe('filesApi', () => {
     await filesApi.moveFile('file_1', 'path_2', true)
 
     const init = fetchMock.mock.calls[0][1] as RequestInit
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/move?show_hidden=true')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/move')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect(init.method).toBe('PATCH')
     expect(JSON.parse(init.body as string)).toEqual({ path_id: 'path_2' })
   })
 
-  it('deletes file with show_hidden query', async () => {
+  it('deletes file without visibility query', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
 
     await filesApi.deleteFile('file_1', false)
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1?show_hidden=false')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE')
   })
 

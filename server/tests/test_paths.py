@@ -29,10 +29,10 @@ def test_path_tree_and_create_path(client: TestClient, auth_headers: dict[str, s
     assert [child["path_name"] for child in root["children"]] == ["Notes"]
 
 
-def test_hidden_path_requires_explicit_show_hidden(
+def test_hidden_path_requires_session_switch(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    """隐藏目录不受默认显示配置影响，只在显式 show_hidden=true 时返回。"""
+    """隐藏目录不受默认显示配置和查询参数影响，只由当前会话开关决定。"""
 
     update = client.put(
         "/api/settings/hidden.show_hidden_default",
@@ -61,6 +61,20 @@ def test_hidden_path_requires_explicit_show_hidden(
         "/api/v1/paths/tree",
         headers=auth_headers,
         params={"show_hidden": "true"},
+    )
+    visible_root = visible_tree.json()[0]
+    assert "Hidden Notes" not in [child["path_name"] for child in visible_root["children"]]
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_tree = client.get(
+        "/api/v1/paths/tree",
+        headers=auth_headers,
     )
     visible_root = visible_tree.json()[0]
     hidden_node = next(child for child in visible_root["children"] if child["path_name"] == "Hidden Notes")
@@ -138,6 +152,19 @@ def test_path_can_be_renamed_and_hidden_with_descendants(
         "/api/v1/paths/tree",
         headers=auth_headers,
         params={"show_hidden": "true"},
+    ).json()[0]
+    assert "Archive" not in [item["path_name"] for item in visible_tree["children"]]
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_tree = client.get(
+        "/api/v1/paths/tree",
+        headers=auth_headers,
     ).json()[0]
     assert "Archive" in [item["path_name"] for item in visible_tree["children"]]
 

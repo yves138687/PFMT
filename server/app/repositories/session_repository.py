@@ -31,6 +31,12 @@ class SessionRepository:
 
         session.last_active_at = now_utc()
 
+    def set_show_hidden_enabled(self, session: UserSession, enabled: bool) -> None:
+        """更新当前会话是否允许显示隐藏内容。"""
+
+        session.show_hidden_enabled = enabled
+        session.last_active_at = now_utc()
+
     def delete_by_session_id(self, session_id: str) -> None:
         """退出登录时删除会话记录。"""
 

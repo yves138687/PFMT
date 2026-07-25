@@ -1,6 +1,7 @@
 import { ElMessage } from 'element-plus'
 import { defineStore } from 'pinia'
 
+import { authApi } from '@/api/auth'
 import { settingsApi } from '@/api/settings'
 import type { SystemSettings } from '@/types/settings'
 import { DEFAULT_SYSTEM_SETTINGS } from '@/types/settings'
@@ -38,6 +39,7 @@ export const useSettingsStore = defineStore('settings', {
         await settingsApi.updateSettings(normalizedSettings)
         this.settings = normalizedSettings
         if (!settings.hiddenFeatureEnabled) {
+          await authApi.setHiddenContentSession(false)
           this.showHiddenContent = false
         }
         ElMessage.success('系统配置已保存')
@@ -45,8 +47,17 @@ export const useSettingsStore = defineStore('settings', {
         this.saving = false
       }
     },
-    setShowHiddenContent(value: boolean) {
-      this.showHiddenContent = this.settings.hiddenFeatureEnabled && value
+    async setShowHiddenContent(value: boolean) {
+      const enabled = this.settings.hiddenFeatureEnabled && value
+      const previous = this.showHiddenContent
+      this.showHiddenContent = enabled
+      try {
+        const response = await authApi.setHiddenContentSession(enabled)
+        this.showHiddenContent = this.settings.hiddenFeatureEnabled && response.show_hidden_enabled
+      } catch (error) {
+        this.showHiddenContent = previous
+        throw error
+      }
     }
   }
 })

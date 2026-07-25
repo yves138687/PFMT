@@ -107,6 +107,15 @@ def _patch_sqlite_schema(engine: Engine) -> None:
         if columns and "summary_updated_at" not in columns:
             connection.execute(text("ALTER TABLE file_info ADD COLUMN summary_updated_at DATETIME"))
 
+        session_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(user_session)")).all()
+        }
+        if session_columns and "show_hidden_enabled" not in session_columns:
+            connection.execute(
+                text("ALTER TABLE user_session ADD COLUMN show_hidden_enabled BOOLEAN NOT NULL DEFAULT 0")
+            )
+
         connection.execute(
             text(
                 """

@@ -17,6 +17,7 @@ from app.models.file import FileInfo, FilePath, FileTag
 from app.models.user import UserAccount
 from app.repositories.file_repository import FileRepository, FileTagRepository
 from app.repositories.path_repository import PathRepository
+from app.repositories.session_repository import SessionRepository
 from app.schemas.file import (
     FileDetailResponse,
     FileListItem,
@@ -47,6 +48,7 @@ class FileService:
         self.repository = FileRepository(db)
         self.tag_repository = FileTagRepository(db)
         self.path_repository = PathRepository(db)
+        self.session_repository = SessionRepository(db)
         self.setting_service = SettingService(db)
         self.audit_service = AuditService(db)
         self.storage_service = StorageService(settings)
@@ -85,9 +87,10 @@ class FileService:
         expires_at = now_utc() + timedelta(minutes=5)
         payload: dict[str, Any] = {
             "sub": current_user.user_id,
+            "sid": getattr(current_user, "_pfmt_session_id", None),
             "fid": file_id,
             "purpose": "video_preview",
-            "show_hidden": self._include_hidden_files(show_hidden),
+            "show_hidden": self._include_hidden_files(current_user=current_user),
             "jti": uuid4().hex,
             "exp": expires_at.replace(tzinfo=timezone.utc),
             "iat": now_utc().replace(tzinfo=timezone.utc),
@@ -121,7 +124,11 @@ class FileService:
 
         payload = self._decode_preview_token(token=token, file_id=file_id)
         user_id = str(payload["sub"])
-        include_hidden = bool(payload.get("show_hidden"))
+        session_id = str(payload["sid"])
+        session = self.session_repository.get_active(session_id)
+        if session is None or session.user_id != user_id:
+            raise AuthenticationError("视频预览链接无效或已过期")
+        include_hidden = self.setting_service.get_bool("hidden.feature_enabled", True) and bool(session.show_hidden_enabled)
         file_info, parent_path = self._get_visible_file_for_token(
             file_id=file_id,
             include_hidden=include_hidden,
@@ -397,7 +404,7 @@ class FileService:
     ) -> list[FileListItem]:
         """读取指定目录下的文件元数据列表，前端用它展示文件列表和逻辑地址。"""
 
-        include_hidden = self._include_hidden_files(show_hidden)
+        include_hidden = self._include_hidden_files(current_user=current_user)
         parent_path = self.path_repository.get_active_by_path_id(path_id)
         if parent_path is None:
             self._record_failed_list(current_user.user_id, client_ip, path_id, "path_not_found")
@@ -528,7 +535,7 @@ class FileService:
         normalized_query = query.strip()
         if not normalized_query:
             return FileSearchResponse(items=[], total=0)
-        include_hidden = self._include_hidden_files(show_hidden)
+        include_hidden = self._include_hidden_files(current_user=current_user)
         files = self.repository.search_active(
             query=normalized_query,
             include_hidden=include_hidden,
@@ -691,7 +698,7 @@ class FileService:
             client_ip=client_ip,
         )
         target_path = self.path_repository.get_active_by_path_id(payload.path_id)
-        include_hidden = self._include_hidden_files(show_hidden)
+        include_hidden = self._include_hidden_files(current_user=current_user)
         if target_path is None or (target_path.is_hidden and not include_hidden):
             self._record_file_action_failure(
                 user_id=current_user.user_id,
@@ -835,11 +842,12 @@ class FileService:
             },
         )
 
-    def _include_hidden_files(self, show_hidden: bool | None) -> bool:
-        """依据隐藏功能开关和请求参数决定是否返回隐藏文件。"""
+    def _include_hidden_files(self, *, current_user: UserAccount) -> bool:
+        """依据隐藏功能开关和当前会话状态决定是否返回隐藏文件。"""
 
         hidden_feature_enabled = self.setting_service.get_bool("hidden.feature_enabled", True)
-        return hidden_feature_enabled and show_hidden is True
+        session_enabled = bool(getattr(current_user, "_pfmt_show_hidden_enabled", False))
+        return hidden_feature_enabled and session_enabled
 
     def _get_visible_file_and_path(
         self,
@@ -874,7 +882,7 @@ class FileService:
             )
             raise NotFoundError("文件不存在")
 
-        include_hidden = self._include_hidden_files(show_hidden)
+        include_hidden = self._include_hidden_files(current_user=current_user)
         if (file_info.is_hidden or parent_path.is_hidden) and not include_hidden:
             self._record_file_action_failure(
                 user_id=current_user.user_id,
@@ -893,7 +901,12 @@ class FileService:
         except jwt.PyJWTError as exc:
             raise AuthenticationError("视频预览链接无效或已过期") from exc
 
-        if payload.get("purpose") != "video_preview" or payload.get("fid") != file_id or not payload.get("sub"):
+        if (
+            payload.get("purpose") != "video_preview"
+            or payload.get("fid") != file_id
+            or not payload.get("sub")
+            or not payload.get("sid")
+        ):
             raise AuthenticationError("视频预览链接无效或已过期")
         return payload
 
@@ -1025,7 +1038,6 @@ class FileService:
             file_id=file_info.file_id,
             path_id=file_info.path_id,
             original_name=file_info.original_name,
-            storage_object_name=file_info.storage_object_name,
             storage_provider=file_info.storage_provider,
             mime_type=file_info.mime_type,
             file_ext=file_info.file_ext,

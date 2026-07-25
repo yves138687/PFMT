@@ -14,7 +14,7 @@ from app.models.file import FileInfo, FileTag, FileTagRel
 
 
 def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers: dict[str, str]) -> None:
-    """上传文件必须使用随机 storage_object_name，不能复用原始文件名。"""
+    """上传文件必须使用随机 storage_object_name，但响应不暴露底层对象名。"""
 
     payload = b"# Title\nsecret body\n"
     response = client.post(
@@ -27,14 +27,15 @@ def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers
     assert response.status_code == 201
     body = response.json()
     assert body["original_name"] == "notes.md"
-    assert body["storage_object_name"] != "notes.md"
-    assert "notes" not in body["storage_object_name"].lower()
+    assert "storage_object_name" not in body
     assert body["encryption_enabled"] is True
 
     with Session(get_engine()) as db:
         file_info = db.execute(
             select(FileInfo).where(FileInfo.file_id == body["file_id"])
         ).scalar_one()
+        assert file_info.storage_object_name != "notes.md"
+        assert "notes" not in file_info.storage_object_name.lower()
         object_path = get_settings().storage_root_path / Path(file_info.storage_path)
         stored_bytes = object_path.read_bytes()
         assert payload not in stored_bytes
@@ -183,7 +184,6 @@ def test_file_metadata_rename_hidden_summary_tags_and_search(
             "summary_content": "manual summary",
             "is_hidden": True,
         },
-        params={"show_hidden": "true"},
     )
     assert update_response.status_code == 200
     updated = update_response.json()
@@ -192,23 +192,37 @@ def test_file_metadata_rename_hidden_summary_tags_and_search(
     assert updated["summary_content"] == "manual summary"
     assert updated["is_hidden"] is True
 
+    hidden_search = client.get("/api/files/search", headers=auth_headers, params={"q": "alpha"})
+    assert hidden_search.status_code == 200
+    assert hidden_search.json()["items"] == []
+
+    unauthorized_visible_search = client.get(
+        "/api/files/search",
+        headers=auth_headers,
+        params={"q": "alpha", "show_hidden": "true"},
+    )
+    assert unauthorized_visible_search.status_code == 200
+    assert unauthorized_visible_search.json()["items"] == []
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
     tags_response = client.put(
         f"/api/files/{file_id}/tags",
         headers=auth_headers,
-        params={"show_hidden": "true"},
         json={"tag_names": ["work", "alpha", "work"]},
     )
     assert tags_response.status_code == 200
     assert [tag["tag_name"] for tag in tags_response.json()["tags"]] == ["alpha", "work"]
 
-    hidden_search = client.get("/api/files/search", headers=auth_headers, params={"q": "alpha"})
-    assert hidden_search.status_code == 200
-    assert hidden_search.json()["items"] == []
-
     visible_search = client.get(
         "/api/files/search",
         headers=auth_headers,
-        params={"q": "alpha", "show_hidden": "true"},
+        params={"q": "alpha"},
     )
     assert visible_search.status_code == 200
     items = visible_search.json()["items"]
@@ -365,10 +379,23 @@ def test_hidden_video_preview_token_respects_visibility_flag(
     hidden_token_response = client.post(f"/api/files/{file_id}/preview-token", headers=auth_headers)
     assert hidden_token_response.status_code == 404
 
-    visible_token_response = client.post(
+    unauthorized_token_response = client.post(
         f"/api/files/{file_id}/preview-token",
         headers=auth_headers,
         params={"show_hidden": "true"},
+    )
+    assert unauthorized_token_response.status_code == 404
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_token_response = client.post(
+        f"/api/files/{file_id}/preview-token",
+        headers=auth_headers,
     )
     assert visible_token_response.status_code == 200
     stream_response = client.get(visible_token_response.json()["preview_url"], headers={"Range": "bytes=0-5"})
@@ -453,10 +480,23 @@ def test_hidden_file_detail_and_markdown_respect_visibility_flag(
     assert client.get(f"/api/files/{file_id}", headers=auth_headers).status_code == 404
     assert client.get(f"/api/files/{file_id}/markdown", headers=auth_headers).status_code == 404
 
-    visible_detail = client.get(
+    unauthorized_detail = client.get(
         f"/api/files/{file_id}",
         headers=auth_headers,
         params={"show_hidden": "true"},
+    )
+    assert unauthorized_detail.status_code == 404
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_detail = client.get(
+        f"/api/files/{file_id}",
+        headers=auth_headers,
     )
     assert visible_detail.status_code == 200
     assert visible_detail.json()["is_hidden"] is True

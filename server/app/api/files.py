@@ -64,7 +64,7 @@ def list_files(
     settings: Settings = Depends(get_settings),
     client_ip: str | None = Depends(get_client_ip),
 ) -> list[FileListItem]:
-    """按目录读取文件列表；show_hidden 未传时按系统隐藏配置过滤。"""
+    """按目录读取文件列表，是否包含隐藏文件由当前会话开关决定。"""
 
     return FileService(db, settings).list_files(
         path_id=path_id,

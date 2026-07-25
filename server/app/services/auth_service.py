@@ -1,8 +1,10 @@
+from datetime import datetime, timedelta
+
 import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import AuthenticationError
+from app.core.exceptions import AuthenticationError, TooManyRequestsError
 from app.core.security import (
     create_access_token,
     decode_access_token,
@@ -21,6 +23,9 @@ from app.utils.ids import new_business_id
 class AuthService:
     """认证服务，负责单用户登录、JWT 签发与会话校验。"""
 
+    _failed_login_attempts: dict[str, list[datetime]] = {}
+    _login_locks: dict[str, datetime] = {}
+
     def __init__(self, db: Session, settings: Settings):
         self.db = db
         self.settings = settings
@@ -38,8 +43,11 @@ class AuthService:
     ) -> TokenResponse:
         """校验账号密码，成功后签发 JWT 并落会话摘要。"""
 
+        rate_limit_key = self._rate_limit_key(username=username, client_ip=client_ip)
+        self._ensure_login_allowed(rate_limit_key)
         user = self.user_repository.get_by_username(username)
         if user is None or user.status != "active" or not verify_password(password, user.password_hash):
+            self._record_failed_login_attempt(rate_limit_key)
             self.audit_service.record(
                 user_id=user.user_id if user else None,
                 action_type="login",
@@ -52,6 +60,7 @@ class AuthService:
             self.db.commit()
             raise AuthenticationError("用户名或密码错误")
 
+        self._clear_failed_login_attempts(rate_limit_key)
         session_id = new_business_id("session")
         token, expires_at = create_access_token(
             settings=self.settings,
@@ -108,7 +117,29 @@ class AuthService:
             raise AuthenticationError("登录态无效或已过期")
 
         self.session_repository.touch(session)
+        setattr(user, "_pfmt_session_id", session.session_id)
+        setattr(user, "_pfmt_show_hidden_enabled", bool(session.show_hidden_enabled))
         return user
+
+    def set_hidden_content_enabled(self, *, token: str, current_user: UserAccount, enabled: bool) -> bool:
+        """更新当前登录会话的隐藏内容显示授权。"""
+
+        try:
+            payload = decode_access_token(self.settings, token)
+        except jwt.PyJWTError as exc:
+            raise AuthenticationError("登录态无效或已过期") from exc
+
+        session_id = payload.get("sid")
+        if not isinstance(session_id, str):
+            raise AuthenticationError("登录态无效或已过期")
+
+        session = self.session_repository.get_active(session_id)
+        if session is None or session.user_id != current_user.user_id or session.access_token != hash_token(token):
+            raise AuthenticationError("登录态无效或已过期")
+
+        self.session_repository.set_show_hidden_enabled(session, enabled)
+        self.db.commit()
+        return enabled
 
     def logout(self, *, token: str, current_user: UserAccount, client_ip: str | None) -> None:
         """退出登录，删除当前会话记录。"""
@@ -130,6 +161,34 @@ class AuthService:
             client_ip=client_ip,
         )
         self.db.commit()
+
+    def _rate_limit_key(self, *, username: str, client_ip: str | None) -> str:
+        return f"{username.strip().lower()}|{client_ip or 'unknown'}"
+
+    def _ensure_login_allowed(self, key: str) -> None:
+        now = now_utc()
+        locked_until = self._login_locks.get(key)
+        if locked_until is not None and locked_until > now:
+            raise TooManyRequestsError("登录失败次数过多，请稍后再试")
+        if locked_until is not None:
+            self._login_locks.pop(key, None)
+
+    def _record_failed_login_attempt(self, key: str) -> None:
+        now = now_utc()
+        window_started_at = now - timedelta(minutes=self.settings.login_rate_limit_window_minutes)
+        attempts = [
+            attempt_at
+            for attempt_at in self._failed_login_attempts.get(key, [])
+            if attempt_at >= window_started_at
+        ]
+        attempts.append(now)
+        self._failed_login_attempts[key] = attempts
+        if len(attempts) >= self.settings.login_rate_limit_attempts:
+            self._login_locks[key] = now + timedelta(minutes=self.settings.login_rate_limit_lock_minutes)
+
+    def _clear_failed_login_attempts(self, key: str) -> None:
+        self._failed_login_attempts.pop(key, None)
+        self._login_locks.pop(key, None)
 
     @staticmethod
     def _to_profile(user: UserAccount) -> UserProfile:

@@ -17,7 +17,6 @@ class FileUploadResponse(BaseModel):
     file_id: str
     path_id: str
     original_name: str
-    storage_object_name: str
     storage_provider: str
     mime_type: str | None
     file_ext: str | None

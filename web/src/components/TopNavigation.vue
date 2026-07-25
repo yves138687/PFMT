@@ -124,7 +124,7 @@ watch(
         <el-switch
           :model-value="settingsStore.showHiddenContent"
           aria-label="显示隐藏内容"
-          @change="(value: string | number | boolean) => settingsStore.setShowHiddenContent(Boolean(value))"
+          @change="(value: string | number | boolean) => void settingsStore.setShowHiddenContent(Boolean(value))"
         />
       </div>
 

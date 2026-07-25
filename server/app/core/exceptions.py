@@ -41,3 +41,8 @@ class UnsupportedFileTypeError(AppError):
 class PayloadTooLargeError(AppError):
     status_code = 413
     error_code = "payload_too_large"
+
+
+class TooManyRequestsError(AppError):
+    status_code = 429
+    error_code = "too_many_requests"

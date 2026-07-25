@@ -1,8 +1,15 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { authApi } from '@/api/auth'
 import { settingsApi } from '@/api/settings'
 import { useSettingsStore } from '@/stores/settingsStore'
+
+vi.mock('@/api/auth', () => ({
+  authApi: {
+    setHiddenContentSession: vi.fn()
+  }
+}))
 
 vi.mock('@/api/settings', () => ({
   settingsApi: {
@@ -14,6 +21,9 @@ vi.mock('@/api/settings', () => ({
 describe('settings store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    vi.mocked(authApi.setHiddenContentSession).mockResolvedValue({
+      show_hidden_enabled: true
+    })
   })
 
   it('loads backend setting keys into view model fields', async () => {
@@ -46,7 +56,7 @@ describe('settings store', () => {
     })
 
     const store = useSettingsStore()
-    store.setShowHiddenContent(true)
+    await store.setShowHiddenContent(true)
     await store.loadSettings()
 
     expect(store.showHiddenContent).toBe(true)
@@ -56,7 +66,7 @@ describe('settings store', () => {
     vi.mocked(settingsApi.updateSettings).mockResolvedValue([])
 
     const store = useSettingsStore()
-    store.setShowHiddenContent(true)
+    await store.setShowHiddenContent(true)
 
     await store.saveSettings({
       hiddenFeatureEnabled: false,

@@ -5,6 +5,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import now_utc
 from app.models.file import FilePath
+from app.models.user import UserAccount
 from app.repositories.file_repository import FileRepository
 from app.repositories.path_repository import PathRepository
 from app.schemas.path import PathCreateRequest, PathMoveRequest, PathRead, PathTreeNode, PathUpdateRequest
@@ -26,10 +27,10 @@ class PathService:
         self.audit_service = AuditService(db)
         self.storage_service = StorageService(self.settings)
 
-    def get_tree(self, *, show_hidden: bool | None = None) -> list[PathTreeNode]:
-        """读取目录树；未显式传 show_hidden 时按系统配置决定隐藏过滤。"""
+    def get_tree(self, *, show_hidden: bool | None = None, current_user: UserAccount | None = None) -> list[PathTreeNode]:
+        """读取目录树；是否包含隐藏目录只由当前会话开关决定。"""
 
-        include_hidden = self._include_hidden(show_hidden)
+        include_hidden = self._include_hidden(current_user=current_user)
         paths = self.repository.list_active(include_hidden=include_hidden)
         node_map = {path.path_id: self._to_tree_node(path) for path in paths}
         roots: list[PathTreeNode] = []
@@ -350,11 +351,12 @@ class PathService:
         for file_info in files:
             self.storage_service.delete_object(file_info.storage_path)
 
-    def _include_hidden(self, show_hidden: bool | None) -> bool:
-        """依据隐藏开关和请求参数决定是否返回隐藏目录。"""
+    def _include_hidden(self, *, current_user: UserAccount | None) -> bool:
+        """依据隐藏功能开关和当前会话状态决定是否返回隐藏目录。"""
 
         feature_enabled = self.setting_service.get_bool("hidden.feature_enabled", True)
-        return feature_enabled and show_hidden is True
+        session_enabled = bool(getattr(current_user, "_pfmt_show_hidden_enabled", False))
+        return feature_enabled and session_enabled
 
     @staticmethod
     def _join_full_path(parent_full_path: str, path_name: str) -> str:

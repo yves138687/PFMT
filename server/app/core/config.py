@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     jwt_secret: str | None = None
     jwt_algorithm: str = "HS256"
     jwt_access_token_minutes: int = 480
+    login_rate_limit_attempts: int = 5
+    login_rate_limit_window_minutes: int = 15
+    login_rate_limit_lock_minutes: int = 15
     admin_username: str = "admin"
     admin_password: str = "admin123456"
     admin_display_name: str = "管理员"

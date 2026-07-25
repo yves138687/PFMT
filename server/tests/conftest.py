@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app.core.config import get_settings
 from app.core.database import reset_database_state
 from app.main import create_app
+from app.services.auth_service import AuthService
 
 
 @pytest.fixture()
@@ -24,12 +25,16 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
 
     get_settings.cache_clear()
     reset_database_state()
+    AuthService._failed_login_attempts.clear()
+    AuthService._login_locks.clear()
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client
 
     reset_database_state()
     get_settings.cache_clear()
+    AuthService._failed_login_attempts.clear()
+    AuthService._login_locks.clear()
 
 
 @pytest.fixture()

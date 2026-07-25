@@ -1,5 +1,5 @@
 import { http } from './http'
-import type { LoginRequest, LoginResponse, UserProfile } from '@/types/auth'
+import type { HiddenContentSessionResponse, LoginRequest, LoginResponse, UserProfile } from '@/types/auth'
 
 export const authApi = {
   login(payload: LoginRequest) {
@@ -10,6 +10,9 @@ export const authApi = {
   },
   getCurrentUser() {
     return http.get<UserProfile>('/auth/me')
+  },
+  setHiddenContentSession(enabled: boolean) {
+    return http.put<HiddenContentSessionResponse>('/auth/hidden-content', { enabled })
   }
 }
 

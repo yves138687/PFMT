@@ -12,19 +12,17 @@ import type {
 } from '@/types/files'
 
 export const filesApi = {
-  listFiles(pathId = 'root', showHidden?: boolean) {
+  listFiles(pathId = 'root', _showHidden?: boolean) {
     return http.get<FileInfo[]>('/files', {
       query: {
-        path_id: pathId,
-        show_hidden: showHidden
+        path_id: pathId
       }
     })
   },
-  searchFiles(query: string, showHidden?: boolean, limit = 50) {
+  searchFiles(query: string, _showHidden?: boolean, limit = 50) {
     return http.get<FileSearchResponse>('/files/search', {
       query: {
         q: query,
-        show_hidden: showHidden,
         limit
       }
     })
@@ -41,87 +39,45 @@ export const filesApi = {
 
     return http.post<FileInfo>('/files/upload', formData)
   },
-  getFileDetail(fileId: string, showHidden?: boolean) {
-    return http.get<FileDetail>(`/files/${encodeURIComponent(fileId)}`, {
-      query: {
-        show_hidden: showHidden
-      }
-    })
+  getFileDetail(fileId: string, _showHidden?: boolean) {
+    return http.get<FileDetail>(`/files/${encodeURIComponent(fileId)}`)
   },
-  updateFile(fileId: string, payload: FileUpdatePayload, showHidden?: boolean) {
-    return http.patch<FileDetail>(
-      `/files/${encodeURIComponent(fileId)}`,
-      payload,
-      {
-        query: {
-          show_hidden: showHidden
-        }
-      }
-    )
+  updateFile(fileId: string, payload: FileUpdatePayload, _showHidden?: boolean) {
+    return http.patch<FileDetail>(`/files/${encodeURIComponent(fileId)}`, payload)
   },
   updateFileRemark(fileId: string, remark: string | null, showHidden?: boolean) {
     return filesApi.updateFile(fileId, { remark }, showHidden)
   },
-  updateFileTags(fileId: string, tagNames: string[], showHidden?: boolean) {
+  updateFileTags(fileId: string, tagNames: string[], _showHidden?: boolean) {
     return http.put<FileDetail>(
       `/files/${encodeURIComponent(fileId)}/tags`,
       {
         tag_names: tagNames
-      },
-      {
-        query: {
-          show_hidden: showHidden
-        }
       }
     )
   },
-  moveFile(fileId: string, pathId: string, showHidden?: boolean) {
+  moveFile(fileId: string, pathId: string, _showHidden?: boolean) {
     return http.patch<FileDetail>(
       `/files/${encodeURIComponent(fileId)}/move`,
       {
         path_id: pathId
-      },
-      {
-        query: {
-          show_hidden: showHidden
-        }
       }
     )
   },
-  deleteFile(fileId: string, showHidden?: boolean) {
-    return http.delete<void>(`/files/${encodeURIComponent(fileId)}`, {
-      query: {
-        show_hidden: showHidden
-      }
-    })
+  deleteFile(fileId: string, _showHidden?: boolean) {
+    return http.delete<void>(`/files/${encodeURIComponent(fileId)}`)
   },
-  getMarkdownFile(fileId: string, showHidden?: boolean) {
-    return http.get<MarkdownFileContent>(`/files/${encodeURIComponent(fileId)}/markdown`, {
-      query: {
-        show_hidden: showHidden
-      }
-    })
+  getMarkdownFile(fileId: string, _showHidden?: boolean) {
+    return http.get<MarkdownFileContent>(`/files/${encodeURIComponent(fileId)}/markdown`)
   },
-  getTextFile(fileId: string, showHidden?: boolean) {
-    return http.get<TextFileContent>(`/files/${encodeURIComponent(fileId)}/text`, {
-      query: {
-        show_hidden: showHidden
-      }
-    })
+  getTextFile(fileId: string, _showHidden?: boolean) {
+    return http.get<TextFileContent>(`/files/${encodeURIComponent(fileId)}/text`)
   },
-  getPreviewBlob(fileId: string, showHidden?: boolean) {
-    return http.blob(`/files/${encodeURIComponent(fileId)}/preview`, {
-      query: {
-        show_hidden: showHidden
-      }
-    })
+  getPreviewBlob(fileId: string, _showHidden?: boolean) {
+    return http.blob(`/files/${encodeURIComponent(fileId)}/preview`)
   },
-  issuePreviewToken(fileId: string, showHidden?: boolean) {
-    return http.post<FilePreviewToken>(`/files/${encodeURIComponent(fileId)}/preview-token`, undefined, {
-      query: {
-        show_hidden: showHidden
-      }
-    })
+  issuePreviewToken(fileId: string, _showHidden?: boolean) {
+    return http.post<FilePreviewToken>(`/files/${encodeURIComponent(fileId)}/preview-token`)
   }
 }
 

@@ -20,6 +20,18 @@ class UserProfile(BaseModel):
     last_login_at: datetime | None = None
 
 
+class HiddenContentSessionRequest(BaseModel):
+    """当前登录会话的隐藏内容显示开关。"""
+
+    enabled: bool
+
+
+class HiddenContentSessionResponse(BaseModel):
+    """当前登录会话是否允许读取隐藏内容。"""
+
+    show_hidden_enabled: bool
+
+
 class TokenResponse(BaseModel):
     """登录成功后的 JWT 响应。"""
 

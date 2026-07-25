@@ -17,3 +17,7 @@ export interface LoginResponse {
   expires_at?: string
   user: UserProfile
 }
+
+export interface HiddenContentSessionResponse {
+  show_hidden_enabled: boolean
+}

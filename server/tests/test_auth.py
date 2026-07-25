@@ -32,3 +32,35 @@ def test_wrong_password_is_rejected_and_audited(client: TestClient) -> None:
             AuditLog.action_result == "failed",
         )
         assert db.execute(stmt).scalar_one_or_none() is not None
+
+
+def test_login_rate_limit_locks_repeated_failures(client: TestClient) -> None:
+    """同一用户名和来源连续失败后会被临时限速。"""
+
+    for _index in range(5):
+        response = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "bad-password"},
+        )
+        assert response.status_code == 401
+
+    locked_response = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "bad-password"},
+    )
+    assert locked_response.status_code == 429
+
+
+def test_hidden_content_session_switch_requires_auth(client: TestClient, auth_headers: dict[str, str]) -> None:
+    """显示隐藏内容必须写入当前登录会话，不能未登录打开。"""
+
+    unauthorized = client.put("/api/auth/hidden-content", json={"enabled": True})
+    assert unauthorized.status_code == 401
+
+    response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["show_hidden_enabled"] is True
