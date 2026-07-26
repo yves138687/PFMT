@@ -6,9 +6,16 @@ import { settingsApi } from '@/api/settings'
 import type { SystemSettings } from '@/types/settings'
 import { DEFAULT_SYSTEM_SETTINGS } from '@/types/settings'
 
+function cloneSettings(settings: SystemSettings): SystemSettings {
+  return {
+    ...settings,
+    aiProviders: settings.aiProviders.map((provider) => ({ ...provider }))
+  }
+}
+
 export const useSettingsStore = defineStore('settings', {
   state: () => ({
-    settings: { ...DEFAULT_SYSTEM_SETTINGS } as SystemSettings,
+    settings: cloneSettings(DEFAULT_SYSTEM_SETTINGS),
     showHiddenContent: false,
     initialized: false,
     loading: false,
@@ -16,14 +23,16 @@ export const useSettingsStore = defineStore('settings', {
   }),
   getters: {
     hiddenFeatureEnabled: (state) => state.settings.hiddenFeatureEnabled,
-    encryptionEnabled: (state) => state.settings.encryptionEnabled
+    encryptionEnabled: (state) => state.settings.encryptionEnabled,
+    activeAiProvider: (state) =>
+      state.settings.aiProviders.find((provider) => provider.id === state.settings.activeAiProviderId) ?? null
   },
   actions: {
     async loadSettings() {
       this.loading = true
       try {
         const settings = await settingsApi.getSettings()
-        this.settings = { ...settings, showHiddenDefault: false }
+        this.settings = cloneSettings({ ...settings, showHiddenDefault: false })
         this.initialized = true
         if (!this.settings.hiddenFeatureEnabled) {
           this.showHiddenContent = false
@@ -35,9 +44,9 @@ export const useSettingsStore = defineStore('settings', {
     async saveSettings(settings: SystemSettings) {
       this.saving = true
       try {
-        const normalizedSettings = { ...settings, showHiddenDefault: false }
-        await settingsApi.updateSettings(normalizedSettings)
-        this.settings = normalizedSettings
+        const normalizedSettings = cloneSettings({ ...settings, showHiddenDefault: false })
+        const savedSettings = await settingsApi.updateSettings(normalizedSettings)
+        this.settings = cloneSettings({ ...savedSettings, showHiddenDefault: false })
         if (!settings.hiddenFeatureEnabled) {
           await authApi.setHiddenContentSession(false)
           this.showHiddenContent = false

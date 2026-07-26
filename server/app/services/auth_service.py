@@ -27,6 +27,8 @@ class AuthService:
     _login_locks: dict[str, datetime] = {}
 
     def __init__(self, db: Session, settings: Settings):
+        """初始化认证服务依赖的仓储、配置和审计服务。"""
+
         self.db = db
         self.settings = settings
         self.user_repository = UserRepository(db)
@@ -163,9 +165,13 @@ class AuthService:
         self.db.commit()
 
     def _rate_limit_key(self, *, username: str, client_ip: str | None) -> str:
+        """生成登录限流键，按用户名和客户端 IP 聚合失败次数。"""
+
         return f"{username.strip().lower()}|{client_ip or 'unknown'}"
 
     def _ensure_login_allowed(self, key: str) -> None:
+        """检查登录失败锁定窗口，锁定期间拒绝继续认证。"""
+
         now = now_utc()
         locked_until = self._login_locks.get(key)
         if locked_until is not None and locked_until > now:
@@ -174,6 +180,8 @@ class AuthService:
             self._login_locks.pop(key, None)
 
     def _record_failed_login_attempt(self, key: str) -> None:
+        """记录一次登录失败，达到阈值后进入临时锁定。"""
+
         now = now_utc()
         window_started_at = now - timedelta(minutes=self.settings.login_rate_limit_window_minutes)
         attempts = [
@@ -187,6 +195,8 @@ class AuthService:
             self._login_locks[key] = now + timedelta(minutes=self.settings.login_rate_limit_lock_minutes)
 
     def _clear_failed_login_attempts(self, key: str) -> None:
+        """登录成功后清除该限流键的失败记录。"""
+
         self._failed_login_attempts.pop(key, None)
         self._login_locks.pop(key, None)
 

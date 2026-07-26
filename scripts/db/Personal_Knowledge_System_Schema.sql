@@ -278,6 +278,8 @@ INSERT OR IGNORE INTO system_setting (
     ('backup.git_enabled', 'true', 'boolean', 'backup', '是否启用 Git 备份能力', 1),
     ('backup.encrypt_before_push', 'true', 'boolean', 'backup', '备份推送到第三方前是否加密', 1),
     ('ai.feature_enabled', 'true', 'boolean', 'ai', '是否启用文件内 AI 能力', 1),
+    ('ai.providers', '[]', 'json', 'ai', 'AI 模型提供方配置列表', 0),
+    ('ai.active_provider_id', NULL, 'string', 'ai', '当前默认使用的 AI 模型配置', 1),
     ('ai.allow_summary_writeback', 'true', 'boolean', 'ai', '是否允许 AI 摘要回写文件元数据', 1);
 
 COMMIT;

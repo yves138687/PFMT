@@ -1,9 +1,17 @@
 import { http } from './http'
-import type { SystemSettingDto, SystemSettings } from '@/types/settings'
+import type { AiProviderConfig, AiProviderType, SystemSettingDto, SystemSettings } from '@/types/settings'
 import { DEFAULT_SYSTEM_SETTINGS, type SettingItem } from '@/types/settings'
 import { boolSetting } from '@/utils/format'
 
 type SettingsResponse = SystemSettingDto[] | { settings: SystemSettingDto[] } | Record<string, unknown>
+
+function inferSettingValueType(value: unknown) {
+  if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+    return 'json'
+  }
+
+  return typeof value === 'boolean' ? 'boolean' : 'string'
+}
 
 function toBoolean(value: unknown, fallback: boolean) {
   if (value === undefined || value === null || value === '') {
@@ -11,6 +19,14 @@ function toBoolean(value: unknown, fallback: boolean) {
   }
 
   return boolSetting(value)
+}
+
+function toStringOrNull(value: unknown) {
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  return String(value)
 }
 
 function extractItems(response: SettingsResponse): SettingItem[] {
@@ -24,16 +40,24 @@ function extractItems(response: SettingsResponse): SettingItem[] {
 
   return Object.entries(response).map(([setting_key, setting_value]) => ({
     setting_key,
-    setting_value: stringifySettingValue(setting_value),
-    value_type: typeof setting_value === 'boolean' ? 'boolean' : 'string',
+    setting_value: normalizeSettingValue(setting_value),
+    value_type: inferSettingValueType(setting_value),
     group_name: setting_key.split('.')[0] ?? 'system',
     is_public: true
   })) satisfies SystemSettingDto[]
 }
 
-function stringifySettingValue(value: unknown) {
+function normalizeSettingValue(value: unknown): SystemSettingDto['setting_value'] {
   if (value === undefined || value === null) {
     return null
+  }
+
+  if (typeof value === 'boolean' || typeof value === 'number' || typeof value === 'string') {
+    return value
+  }
+
+  if (Array.isArray(value)) {
+    return value as AiProviderConfig[]
   }
 
   return String(value)
@@ -42,9 +66,36 @@ function stringifySettingValue(value: unknown) {
 function toSettingItem(item: SystemSettingDto): SettingItem {
   return {
     ...item,
-    setting_value: stringifySettingValue(item.setting_value),
+    setting_value: normalizeSettingValue(item.setting_value),
     is_public: item.is_public === true || item.is_public === 1
   }
+}
+
+function normalizeAiProviderType(value: unknown): AiProviderType {
+  if (value === 'ollama' || value === 'custom') {
+    return value
+  }
+
+  return 'openai_compatible'
+}
+
+function normalizeAiProviders(value: unknown): AiProviderConfig[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+    .map((item, index) => ({
+      id: String(item.id || `ai-provider-${index + 1}`),
+      name: String(item.name || 'AI 模型'),
+      provider_type: normalizeAiProviderType(item.provider_type),
+      base_url: String(item.base_url || ''),
+      api_key: typeof item.api_key === 'string' ? item.api_key : null,
+      api_key_configured: Boolean(item.api_key_configured),
+      model_name: String(item.model_name || ''),
+      enabled: item.enabled === undefined ? true : boolSetting(item.enabled)
+    }))
 }
 
 export function normalizeSystemSettings(response: SettingsResponse): SystemSettings {
@@ -70,11 +121,24 @@ export function normalizeSystemSettings(response: SettingsResponse): SystemSetti
       case 'ai.feature_enabled':
         settings.aiFeatureEnabled = toBoolean(item.setting_value, settings.aiFeatureEnabled)
         break
+      case 'ai.providers':
+        settings.aiProviders = normalizeAiProviders(item.setting_value)
+        break
+      case 'ai.active_provider_id':
+        settings.activeAiProviderId = toStringOrNull(item.setting_value)
+        break
       case 'backup.git_enabled':
         settings.backupGitEnabled = toBoolean(item.setting_value, settings.backupGitEnabled)
         break
     }
   })
+
+  if (
+    settings.activeAiProviderId &&
+    !settings.aiProviders.some((provider) => provider.id === settings.activeAiProviderId)
+  ) {
+    settings.activeAiProviderId = settings.aiProviders.find((provider) => provider.enabled)?.id ?? null
+  }
 
   return settings
 }
@@ -122,6 +186,30 @@ export function systemSettingsToDto(settings: SystemSettings): SystemSettingDto[
       is_public: 1
     },
     {
+      setting_key: 'ai.providers',
+      setting_value: settings.aiProviders.map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        provider_type: provider.provider_type,
+        base_url: provider.base_url,
+        api_key: provider.api_key?.trim() || null,
+        model_name: provider.model_name,
+        enabled: provider.enabled
+      })),
+      value_type: 'json',
+      group_name: 'ai',
+      description: 'AI 模型提供方配置列表',
+      is_public: 0
+    },
+    {
+      setting_key: 'ai.active_provider_id',
+      setting_value: settings.activeAiProviderId,
+      value_type: 'string',
+      group_name: 'ai',
+      description: '当前默认使用的 AI 模型配置',
+      is_public: 1
+    },
+    {
       setting_key: 'backup.git_enabled',
       setting_value: String(settings.backupGitEnabled),
       value_type: 'boolean',
@@ -150,7 +238,7 @@ export const settingsApi = {
         })
       )
     }
-    return responses
+    return normalizeSystemSettings(responses)
   }
 }
 

@@ -9,6 +9,8 @@ class SessionRepository:
     """封装登录会话读写。"""
 
     def __init__(self, db: Session):
+        """绑定当前请求事务使用的数据库会话。"""
+
         self.db = db
 
     def create(self, session: UserSession) -> UserSession:

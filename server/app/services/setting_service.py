@@ -85,9 +85,23 @@ class SettingService:
 
         existing = self.repository.get_by_key(setting_key)
         value_type = payload.value_type or (existing.value_type if existing else self.infer_value_type(payload.setting_value))
+        setting_value = payload.setting_value
+        if setting_key == "ai.providers":
+            value_type = "json"
+            setting_value = self._merge_ai_providers(
+                incoming=payload.setting_value,
+                existing_raw=existing.setting_value if existing else None,
+                existing_value_type=existing.value_type if existing else "json",
+            )
+        elif setting_key == "ai.active_provider_id":
+            providers_setting = self.repository.get_by_key("ai.providers")
+            setting_value = self._normalize_active_ai_provider_id(
+                active_provider_id=payload.setting_value,
+                providers_raw=providers_setting.setting_value if providers_setting else None,
+            )
         setting = SystemSetting(
             setting_key=setting_key,
-            setting_value=self.serialize_value(payload.setting_value, value_type),
+            setting_value=self.serialize_value(setting_value, value_type),
             value_type=value_type,
             group_name=payload.group_name or (existing.group_name if existing else "custom"),
             description=payload.description if payload.description is not None else (existing.description if existing else None),
@@ -96,6 +110,11 @@ class SettingService:
         )
 
         saved = self.repository.upsert(setting)
+        if setting_key == "ai.providers":
+            self._repair_active_ai_provider_id(
+                updated_by=updated_by,
+                providers=setting_value if isinstance(setting_value, list) else [],
+            )
         self.audit_service.record(
             user_id=updated_by,
             action_type="update_setting",
@@ -109,12 +128,141 @@ class SettingService:
         self.db.refresh(saved)
         return self._to_schema(saved)
 
+    def _repair_active_ai_provider_id(
+        self,
+        *,
+        updated_by: str,
+        providers: list[dict[str, Any]],
+    ) -> None:
+        """AI 配置列表变化后，修正已删除或已停用的默认模型。"""
+
+        active_setting = self.repository.get_by_key("ai.active_provider_id")
+        if active_setting is None:
+            return
+
+        normalized = self._normalize_active_ai_provider_id(
+            active_provider_id=active_setting.setting_value,
+            providers_raw=self.serialize_value(providers, "json"),
+        )
+        active_setting.setting_value = normalized
+        active_setting.updated_by = updated_by
+
+    def _merge_ai_providers(
+        self,
+        *,
+        incoming: Any,
+        existing_raw: str | None,
+        existing_value_type: str,
+    ) -> list[dict[str, Any]]:
+        """合并 AI provider 配置，空 api_key 不覆盖已保存密钥。"""
+
+        existing_providers = self._parse_ai_providers(existing_raw, existing_value_type)
+        existing_by_id = {
+            str(provider.get("id")): provider
+            for provider in existing_providers
+            if provider.get("id")
+        }
+        incoming_providers = incoming if isinstance(incoming, list) else []
+        merged: list[dict[str, Any]] = []
+
+        for index, provider in enumerate(incoming_providers):
+            if not isinstance(provider, dict):
+                continue
+
+            provider_id = str(provider.get("id") or f"ai-provider-{index + 1}")
+            old_provider = existing_by_id.get(provider_id, {})
+            api_key = provider.get("api_key")
+            if not isinstance(api_key, str) or not api_key.strip():
+                api_key = old_provider.get("api_key")
+
+            merged.append(
+                {
+                    "id": provider_id,
+                    "name": str(provider.get("name") or old_provider.get("name") or "AI 模型"),
+                    "provider_type": str(
+                        provider.get("provider_type")
+                        or old_provider.get("provider_type")
+                        or "openai_compatible"
+                    ),
+                    "base_url": str(provider.get("base_url") or old_provider.get("base_url") or ""),
+                    "api_key": api_key if isinstance(api_key, str) and api_key.strip() else None,
+                    "model_name": str(provider.get("model_name") or old_provider.get("model_name") or ""),
+                    "enabled": self._to_bool(provider.get("enabled", old_provider.get("enabled", True))),
+                }
+            )
+
+        return merged
+
+    def _normalize_active_ai_provider_id(
+        self,
+        *,
+        active_provider_id: Any,
+        providers_raw: str | None,
+    ) -> str | None:
+        """默认模型不存在时切换到第一个启用配置，否则清空。"""
+
+        requested = str(active_provider_id or "").strip()
+        providers = self._parse_ai_providers(providers_raw, "json")
+        provider_ids = {
+            str(provider.get("id"))
+            for provider in providers
+            if provider.get("id") and self._to_bool(provider.get("enabled", True))
+        }
+        if requested and requested in provider_ids:
+            return requested
+
+        for provider in providers:
+            provider_id = provider.get("id")
+            if provider_id and self._to_bool(provider.get("enabled", True)):
+                return str(provider_id)
+        return None
+
+    @staticmethod
+    def _to_bool(value: Any) -> bool:
+        """兼容字符串和布尔值形式的配置开关。"""
+
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def _parse_ai_providers(self, raw_value: str | None, value_type: str) -> list[dict[str, Any]]:
+        """安全解析数据库中的 AI provider JSON，异常时返回空列表。"""
+
+        if raw_value is None:
+            return []
+        try:
+            parsed = self.parse_value(raw_value, value_type)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return [item for item in parsed if isinstance(item, dict)]
+
+    def _mask_ai_providers(self, providers: Any) -> list[dict[str, Any]]:
+        """返回前端可见的 AI provider 列表，并移除完整 API Key。"""
+
+        if not isinstance(providers, list):
+            return []
+
+        masked = []
+        for provider in providers:
+            if not isinstance(provider, dict):
+                continue
+            api_key = provider.get("api_key")
+            item = {**provider, "api_key": None, "api_key_configured": bool(api_key)}
+            masked.append(item)
+        return masked
+
     def _to_schema(self, setting: SystemSetting) -> SettingItem:
         """将 ORM 配置模型转换为响应模型。"""
 
+        setting_value = self.parse_value(setting.setting_value, setting.value_type)
+        if setting.setting_key == "ai.providers":
+            setting_value = self._mask_ai_providers(setting_value)
+
         return SettingItem(
             setting_key=setting.setting_key,
-            setting_value=self.parse_value(setting.setting_value, setting.value_type),
+            setting_value=setting_value,
             value_type=setting.value_type,  # type: ignore[arg-type]
             group_name=setting.group_name,
             description=setting.description,
@@ -163,6 +311,22 @@ DEFAULT_SETTINGS = [
         "value_type": "boolean",
         "group_name": "ai",
         "description": "是否启用文件内 AI 能力",
+        "is_public": True,
+    },
+    {
+        "setting_key": "ai.providers",
+        "setting_value": "[]",
+        "value_type": "json",
+        "group_name": "ai",
+        "description": "AI 模型提供方配置列表",
+        "is_public": False,
+    },
+    {
+        "setting_key": "ai.active_provider_id",
+        "setting_value": None,
+        "value_type": "string",
+        "group_name": "ai",
+        "description": "当前默认使用的 AI 模型配置",
         "is_public": True,
     },
     {

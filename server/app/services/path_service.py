@@ -19,6 +19,8 @@ class PathService:
     """目录服务，负责目录树构建、隐藏过滤和创建目录业务。"""
 
     def __init__(self, db: Session, settings: Settings | None = None):
+        """初始化目录服务依赖的仓储、配置和审计服务。"""
+
         self.db = db
         self.settings = settings or get_settings()
         self.repository = PathRepository(db)

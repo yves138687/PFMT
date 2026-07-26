@@ -7,6 +7,8 @@ class AuditRepository:
     """封装审计日志写入，审计日志原则上只增不改不删。"""
 
     def __init__(self, db: Session):
+        """绑定当前请求事务使用的数据库会话。"""
+
         self.db = db
 
     def create(self, audit_log: AuditLog) -> AuditLog:

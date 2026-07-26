@@ -1,21 +1,88 @@
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Key, Lock, Setting, Switch, Warning } from '@element-plus/icons-vue'
+import { Delete, Key, Lock, Plus, Setting, Switch } from '@element-plus/icons-vue'
 
 import { useSettingsStore } from '@/stores/settingsStore'
-import type { SystemSettings } from '@/types/settings'
+import type { AiProviderConfig, AiProviderType, SystemSettings } from '@/types/settings'
 
 const settingsStore = useSettingsStore()
-const form = reactive<SystemSettings>({ ...settingsStore.settings })
+
+const providerTypeOptions: Array<{ label: string; value: AiProviderType }> = [
+  { label: 'OpenAI Compatible', value: 'openai_compatible' },
+  { label: 'Ollama', value: 'ollama' },
+  { label: '自定义', value: 'custom' }
+]
+
+function cloneSettings(settings: SystemSettings): SystemSettings {
+  return {
+    ...settings,
+    aiProviders: settings.aiProviders.map((provider) => ({ ...provider, api_key: null }))
+  }
+}
+
+const form = reactive<SystemSettings>(cloneSettings(settingsStore.settings))
+
+const enabledProviderOptions = computed(() =>
+  form.aiProviders
+    .filter((provider) => provider.enabled)
+    .map((provider) => ({
+      label: `${provider.name || '未命名模型'} / ${provider.model_name || '未填写模型'}`,
+      value: provider.id
+    }))
+)
 
 watch(
   () => settingsStore.settings,
   (settings) => {
-    Object.assign(form, settings)
+    Object.assign(form, cloneSettings(settings))
   },
   { immediate: true }
 )
+
+function createProviderId() {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID()
+  }
+
+  return `ai-provider-${Date.now()}`
+}
+
+function addAiProvider() {
+  const provider: AiProviderConfig = {
+    id: createProviderId(),
+    name: 'OpenAI Compatible',
+    provider_type: 'openai_compatible',
+    base_url: 'https://api.openai.com/v1',
+    api_key: null,
+    api_key_configured: false,
+    model_name: '',
+    enabled: true
+  }
+
+  form.aiProviders.push(provider)
+  form.activeAiProviderId = provider.id
+}
+
+function removeAiProvider(providerId: string) {
+  const index = form.aiProviders.findIndex((provider) => provider.id === providerId)
+  if (index === -1) {
+    return
+  }
+
+  form.aiProviders.splice(index, 1)
+  if (form.activeAiProviderId === providerId) {
+    form.activeAiProviderId = form.aiProviders.find((provider) => provider.enabled)?.id ?? null
+  }
+}
+
+function handleProviderEnabledChange(provider: AiProviderConfig) {
+  if (!provider.enabled && form.activeAiProviderId === provider.id) {
+    form.activeAiProviderId = form.aiProviders.find((item) => item.enabled && item.id !== provider.id)?.id ?? null
+  } else if (provider.enabled && !form.activeAiProviderId) {
+    form.activeAiProviderId = provider.id
+  }
+}
 
 async function reloadSettings() {
   await settingsStore.loadSettings()
@@ -27,7 +94,31 @@ async function saveSettings() {
     return
   }
 
-  await settingsStore.saveSettings({ ...form, storageRootPath: form.storageRootPath.trim() })
+  for (const provider of form.aiProviders) {
+    if (!provider.name.trim() || !provider.base_url.trim() || !provider.model_name.trim()) {
+      ElMessage.warning('请完整填写 AI 模型名称、API URL 和模型名称')
+      return
+    }
+  }
+
+  if (
+    form.activeAiProviderId &&
+    !form.aiProviders.some((provider) => provider.enabled && provider.id === form.activeAiProviderId)
+  ) {
+    form.activeAiProviderId = form.aiProviders.find((provider) => provider.enabled)?.id ?? null
+  }
+
+  await settingsStore.saveSettings({
+    ...form,
+    storageRootPath: form.storageRootPath.trim(),
+    aiProviders: form.aiProviders.map((provider) => ({
+      ...provider,
+      name: provider.name.trim(),
+      base_url: provider.base_url.trim(),
+      api_key: provider.api_key?.trim() || null,
+      model_name: provider.model_name.trim()
+    }))
+  })
 }
 </script>
 
@@ -94,21 +185,113 @@ async function saveSettings() {
 
     <section class="work-panel settings-view__section">
       <div class="panel-header">
+        <h2><el-icon><Key /></el-icon> AI 设置</h2>
+      </div>
+      <div class="panel-body">
+        <el-form label-width="180px">
+          <el-form-item label="AI 功能入口">
+            <el-switch v-model="form.aiFeatureEnabled" />
+            <span class="settings-view__help">当前只保存模型配置，不开放 AI 使用链路。</span>
+          </el-form-item>
+          <el-form-item label="默认模型">
+            <el-select
+              v-model="form.activeAiProviderId"
+              clearable
+              placeholder="选择要使用的模型"
+              class="settings-view__select"
+              :disabled="enabledProviderOptions.length === 0"
+            >
+              <el-option
+                v-for="option in enabledProviderOptions"
+                :key="option.value"
+                :label="option.label"
+                :value="option.value"
+              />
+            </el-select>
+            <span class="settings-view__help">后续 AI 功能会默认使用该模型配置。</span>
+          </el-form-item>
+        </el-form>
+
+        <div class="settings-view__table-toolbar">
+          <strong>模型配置列表</strong>
+          <el-button type="primary" :icon="Plus" @click="addAiProvider">新增配置</el-button>
+        </div>
+
+        <el-table :data="form.aiProviders" border class="settings-view__provider-table">
+          <el-table-column label="启用" width="86">
+            <template #default="{ row }">
+              <el-switch v-model="row.enabled" @change="handleProviderEnabledChange(row)" />
+            </template>
+          </el-table-column>
+          <el-table-column label="名称" min-width="170">
+            <template #default="{ row }">
+              <el-input v-model="row.name" placeholder="OpenAI 主模型" />
+            </template>
+          </el-table-column>
+          <el-table-column label="接口类型" min-width="170">
+            <template #default="{ row }">
+              <el-select v-model="row.provider_type" class="settings-view__cell-control">
+                <el-option
+                  v-for="option in providerTypeOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
+            </template>
+          </el-table-column>
+          <el-table-column label="API URL" min-width="240">
+            <template #default="{ row }">
+              <el-input v-model="row.base_url" placeholder="https://api.openai.com/v1" />
+            </template>
+          </el-table-column>
+          <el-table-column label="模型名称" min-width="180">
+            <template #default="{ row }">
+              <el-input v-model="row.model_name" placeholder="gpt-4.1" />
+            </template>
+          </el-table-column>
+          <el-table-column label="API Key" min-width="220">
+            <template #default="{ row }">
+              <div class="settings-view__key-cell">
+                <el-input v-model="row.api_key" type="password" show-password placeholder="留空则不覆盖" />
+                <el-tag size="small" :type="row.api_key_configured ? 'success' : 'info'">
+                  {{ row.api_key_configured ? '已配置' : '未配置' }}
+                </el-tag>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="默认" width="86">
+            <template #default="{ row }">
+              <el-radio
+                v-model="form.activeAiProviderId"
+                :label="row.id"
+                :disabled="!row.enabled"
+              >
+                使用
+              </el-radio>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="86">
+            <template #default="{ row }">
+              <el-button :icon="Delete" circle @click="removeAiProvider(row.id)" />
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-empty
+          v-if="form.aiProviders.length === 0"
+          description="暂无 AI 模型配置"
+          :image-size="80"
+        />
+      </div>
+    </section>
+
+    <section class="work-panel settings-view__section">
+      <div class="panel-header">
         <h2><el-icon><Key /></el-icon> 预留能力</h2>
       </div>
       <div class="panel-body settings-view__reserved">
-        <el-checkbox v-model="form.aiFeatureEnabled">AI 功能入口</el-checkbox>
         <el-checkbox v-model="form.backupGitEnabled">Git 备份入口</el-checkbox>
-        <el-alert
-          :closable="false"
-          type="warning"
-          show-icon
-          title="AI 与备份属于后续阶段，当前仅保留配置字段，不开放业务链路。"
-        >
-          <template #icon>
-            <el-icon><Warning /></el-icon>
-          </template>
-        </el-alert>
       </div>
     </section>
   </section>
@@ -143,10 +326,43 @@ async function saveSettings() {
   gap: 12px;
 }
 
+.settings-view__select {
+  max-width: 420px;
+  width: 100%;
+}
+
+.settings-view__table-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.settings-view__provider-table {
+  width: 100%;
+}
+
+.settings-view__cell-control {
+  width: 100%;
+}
+
+.settings-view__key-cell {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(150px, 1fr) auto;
+}
+
 @media (max-width: 720px) {
   .settings-view__help {
     display: block;
     margin: 8px 0 0;
+  }
+
+  .settings-view__key-cell {
+    grid-template-columns: 1fr;
   }
 }
 </style>

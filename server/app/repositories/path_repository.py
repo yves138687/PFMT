@@ -8,6 +8,8 @@ class PathRepository:
     """封装目录树节点查询和创建。"""
 
     def __init__(self, db: Session):
+        """绑定当前请求事务使用的数据库会话。"""
+
         self.db = db
 
     def get_by_path_id(self, path_id: str) -> FilePath | None:

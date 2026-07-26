@@ -76,6 +76,8 @@ class FileUpdateRequest(BaseModel):
     @field_validator("original_name")
     @classmethod
     def validate_original_name(cls, value: str | None) -> str | None:
+        """校验可选文件名，避免空名和路径穿越字符进入业务字段。"""
+
         if value is None:
             return None
         normalized = value.strip()
@@ -223,6 +225,8 @@ class FileTagCreateRequest(BaseModel):
     @field_validator("tag_name")
     @classmethod
     def validate_tag_name(cls, value: str) -> str:
+        """校验标签名，统一去除首尾空白并限制长度。"""
+
         normalized = value.strip()
         if not normalized:
             raise ValueError("标签名不能为空")
@@ -237,6 +241,8 @@ class FileTagsUpdateRequest(BaseModel):
     @field_validator("tag_names")
     @classmethod
     def validate_tag_names(cls, value: list[str]) -> list[str]:
+        """清洗标签名列表，去重并过滤空标签。"""
+
         normalized: list[str] = []
         seen: set[str] = set()
         for item in value:

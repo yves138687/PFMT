@@ -9,6 +9,8 @@ class UserRepository:
     """封装用户账号查询与写入。"""
 
     def __init__(self, db: Session):
+        """绑定当前请求事务使用的数据库会话。"""
+
         self.db = db
 
     def get_by_username(self, username: str) -> UserAccount | None:

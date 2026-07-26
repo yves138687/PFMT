@@ -33,6 +33,8 @@ describe('settings store', () => {
       showHiddenDefault: true,
       storageRootPath: 'D:/pfmt/storage',
       aiFeatureEnabled: false,
+      aiProviders: [],
+      activeAiProviderId: null,
       backupGitEnabled: true
     })
 
@@ -52,6 +54,8 @@ describe('settings store', () => {
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
+      aiProviders: [],
+      activeAiProviderId: null,
       backupGitEnabled: false
     })
 
@@ -63,7 +67,16 @@ describe('settings store', () => {
   })
 
   it('turns off visible hidden content when hidden feature is disabled', async () => {
-    vi.mocked(settingsApi.updateSettings).mockResolvedValue([])
+    vi.mocked(settingsApi.updateSettings).mockResolvedValue({
+      hiddenFeatureEnabled: false,
+      encryptionEnabled: true,
+      showHiddenDefault: false,
+      storageRootPath: 'storage/data',
+      aiFeatureEnabled: false,
+      aiProviders: [],
+      activeAiProviderId: null,
+      backupGitEnabled: false
+    })
 
     const store = useSettingsStore()
     await store.setShowHiddenContent(true)
@@ -74,6 +87,8 @@ describe('settings store', () => {
       showHiddenDefault: true,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
+      aiProviders: [],
+      activeAiProviderId: null,
       backupGitEnabled: false
     })
 
@@ -81,5 +96,54 @@ describe('settings store', () => {
     expect(settingsApi.updateSettings).toHaveBeenCalledWith(
       expect.objectContaining({ showHiddenDefault: false })
     )
+  })
+
+  it('keeps AI provider API keys masked after saving settings', async () => {
+    vi.mocked(settingsApi.updateSettings).mockResolvedValue({
+      hiddenFeatureEnabled: true,
+      encryptionEnabled: true,
+      showHiddenDefault: false,
+      storageRootPath: 'storage/data',
+      aiFeatureEnabled: true,
+      aiProviders: [
+        {
+          id: 'openai-main',
+          name: 'OpenAI 主模型',
+          provider_type: 'openai_compatible',
+          base_url: 'https://api.openai.com/v1',
+          api_key: null,
+          api_key_configured: true,
+          model_name: 'gpt-4.1',
+          enabled: true
+        }
+      ],
+      activeAiProviderId: 'openai-main',
+      backupGitEnabled: false
+    })
+
+    const store = useSettingsStore()
+    await store.saveSettings({
+      hiddenFeatureEnabled: true,
+      encryptionEnabled: true,
+      showHiddenDefault: false,
+      storageRootPath: 'storage/data',
+      aiFeatureEnabled: true,
+      aiProviders: [
+        {
+          id: 'openai-main',
+          name: 'OpenAI 主模型',
+          provider_type: 'openai_compatible',
+          base_url: 'https://api.openai.com/v1',
+          api_key: 'sk-secret',
+          model_name: 'gpt-4.1',
+          enabled: true
+        }
+      ],
+      activeAiProviderId: 'openai-main',
+      backupGitEnabled: false
+    })
+
+    expect(store.settings.aiProviders[0].api_key).toBeNull()
+    expect(store.settings.aiProviders[0].api_key_configured).toBe(true)
   })
 })

@@ -42,6 +42,8 @@ class ContentRange:
 
     @property
     def length(self) -> int:
+        """返回闭区间字节范围的长度。"""
+
         return self.end - self.start + 1
 
 
@@ -49,6 +51,8 @@ class StorageService:
     """本地文件存储服务，负责随机对象名、分块写入和分块解密。"""
 
     def __init__(self, settings: Settings):
+        """根据系统配置初始化存储根目录和文件加密主密钥。"""
+
         self.settings = settings
         self.storage_root = settings.storage_root_path
 

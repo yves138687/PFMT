@@ -45,6 +45,8 @@ class PathUpdateRequest(BaseModel):
     @field_validator("path_name")
     @classmethod
     def validate_path_name(cls, value: str | None) -> str | None:
+        """校验可选目录名，空字符串视为非法更新。"""
+
         if value is None:
             return None
         normalized = value.strip()
