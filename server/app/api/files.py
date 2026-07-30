@@ -9,6 +9,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import AppError, AuthenticationError
 from app.models.user import UserAccount
 from app.schemas.file import (
+    DocumentCreateRequest,
     DocumentConvertRequest,
     DocumentMergeRequest,
     DocumentReadResponse,
@@ -195,6 +196,23 @@ def merge_documents(
     return FileService(db, settings).merge_documents(
         payload=payload,
         show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.post("/document", response_model=FileDetailResponse, status_code=status.HTTP_201_CREATED)
+def create_document(
+    payload: DocumentCreateRequest,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDetailResponse:
+    """创建空白文本、Markdown 或 HTML 文档。"""
+
+    return FileService(db, settings).create_document(
+        payload=payload,
         current_user=current_user,
         client_ip=client_ip,
     )

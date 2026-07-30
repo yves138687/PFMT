@@ -23,7 +23,6 @@ describe('filesApi', () => {
         size_bytes: 10,
         encryption_enabled: true,
         is_hidden: false,
-        visibility_type: 'normal',
         status: 'active',
         created_at: '2026-07-24T00:00:00',
         updated_at: '2026-07-24T00:00:00'
@@ -49,7 +48,6 @@ describe('filesApi', () => {
         size_bytes: 10,
         encryption_enabled: true,
         is_hidden: false,
-        visibility_type: 'normal',
         status: 'active',
         remark: '备注',
         created_at: '2026-07-24T00:00:00',
@@ -78,7 +76,6 @@ describe('filesApi', () => {
         size_bytes: 10,
         encryption_enabled: true,
         is_hidden: true,
-        visibility_type: 'normal',
         status: 'active',
         summary_content: '摘要',
         tags: [],
@@ -133,7 +130,6 @@ describe('filesApi', () => {
           size_bytes: 10,
           encryption_enabled: true,
           is_hidden: false,
-          visibility_type: 'normal',
           status: 'active',
           tags: [{ tag_id: 'tag_1', tag_name: 'work' }],
           created_at: '2026-07-24T00:00:00',
@@ -208,6 +204,45 @@ describe('filesApi', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
   })
 
+  it('creates blank documents through the document endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          file_id: 'file_new',
+          path_id: 'root',
+          original_name: 'note.md',
+          logical_path: '/note.md',
+          file_type: 'text',
+          size_bytes: 0,
+          encryption_enabled: true,
+          is_hidden: false,
+          status: 'active',
+          created_at: '2026-07-24T00:00:00',
+          updated_at: '2026-07-24T00:00:00'
+        },
+        201
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.createDocument({
+      path_id: 'root',
+      original_name: 'note.md',
+      document_format: 'markdown',
+      is_hidden: false
+    })
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/document')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({
+      path_id: 'root',
+      original_name: 'note.md',
+      document_format: 'markdown',
+      is_hidden: false
+    })
+  })
+
   it('reads saves and converts unified documents without visibility query', async () => {
     const fetchMock = vi
       .fn()
@@ -246,7 +281,6 @@ describe('filesApi', () => {
             size_bytes: 18,
             encryption_enabled: true,
             is_hidden: false,
-            visibility_type: 'normal',
             status: 'active',
             created_at: '2026-07-24T00:00:00',
             updated_at: '2026-07-24T00:00:00'
@@ -265,7 +299,6 @@ describe('filesApi', () => {
             size_bytes: 30,
             encryption_enabled: true,
             is_hidden: false,
-            visibility_type: 'normal',
             status: 'active',
             created_at: '2026-07-24T00:00:00',
             updated_at: '2026-07-24T00:00:00'
@@ -323,7 +356,6 @@ describe('filesApi', () => {
         size_bytes: 10,
         encryption_enabled: true,
         is_hidden: false,
-        visibility_type: 'normal',
         status: 'active',
         created_at: '2026-07-24T00:00:00',
         updated_at: '2026-07-24T00:00:00'

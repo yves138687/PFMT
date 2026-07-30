@@ -17,12 +17,13 @@ def test_path_tree_and_create_path(client: TestClient, auth_headers: dict[str, s
     create_response = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Notes", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Notes", "parent_path_id": "root"},
     )
     assert create_response.status_code == 201
     created = create_response.json()
     assert created["path_name"] == "Notes"
     assert created["full_path"] == "/Notes"
+    assert "path_type" not in created
 
     tree_response = client.get("/api/v1/paths/tree", headers=auth_headers)
     root = tree_response.json()[0]
@@ -78,7 +79,10 @@ def test_hidden_path_requires_session_switch(
     )
     visible_root = visible_tree.json()[0]
     hidden_node = next(child for child in visible_root["children"] if child["path_name"] == "Hidden Notes")
-    assert hidden_node["path_type"] == "normal"
+    assert "path_type" not in hidden_node
+    with Session(get_engine()) as db:
+        hidden_path = db.execute(select(FilePath).where(FilePath.path_id == hidden_node["path_id"])).scalar_one()
+        assert hidden_path.path_type == "normal"
 
 
 def test_path_can_be_moved_with_descendants(client: TestClient, auth_headers: dict[str, str]) -> None:
@@ -87,17 +91,17 @@ def test_path_can_be_moved_with_descendants(client: TestClient, auth_headers: di
     source = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Source", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Source", "parent_path_id": "root"},
     ).json()
     target = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Target", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Target", "parent_path_id": "root"},
     ).json()
     child = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Child", "parent_path_id": source["path_id"], "path_type": "normal"},
+        json={"path_name": "Child", "parent_path_id": source["path_id"]},
     ).json()
 
     move_response = client.patch(
@@ -127,12 +131,12 @@ def test_path_can_be_renamed_and_hidden_with_descendants(
     parent = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Projects", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Projects", "parent_path_id": "root"},
     ).json()
     child = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Alpha", "parent_path_id": parent["path_id"], "path_type": "normal"},
+        json={"path_name": "Alpha", "parent_path_id": parent["path_id"]},
     ).json()
 
     update_response = client.patch(
@@ -181,12 +185,12 @@ def test_path_delete_removes_subtree_files_and_frees_name(
     parent = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Trash", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Trash", "parent_path_id": "root"},
     ).json()
     child = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Child", "parent_path_id": parent["path_id"], "path_type": "normal"},
+        json={"path_name": "Child", "parent_path_id": parent["path_id"]},
     ).json()
     upload_response = client.post(
         "/api/files/upload",
@@ -211,7 +215,7 @@ def test_path_delete_removes_subtree_files_and_frees_name(
     recreate_response = client.post(
         "/api/v1/paths",
         headers=auth_headers,
-        json={"path_name": "Trash", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Trash", "parent_path_id": "root"},
     )
     assert recreate_response.status_code == 201
     assert recreate_response.json()["full_path"] == "/Trash"

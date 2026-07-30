@@ -28,6 +28,7 @@ def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers
     body = response.json()
     assert body["original_name"] == "notes.md"
     assert "storage_object_name" not in body
+    assert "visibility_type" not in body
     assert body["encryption_enabled"] is True
 
     with Session(get_engine()) as db:
@@ -92,6 +93,7 @@ def test_uploaded_file_is_visible_in_folder_list(
     assert files[0]["original_name"] == "folder-list.md"
     assert "storage_object_name" not in files[0]
     assert "storage_path" not in files[0]
+    assert "visibility_type" not in files[0]
     assert files[0]["updated_at"]
 
 
@@ -118,6 +120,7 @@ def test_file_detail_returns_logical_path_without_storage_fields(
     assert detail["remark"] is None
     assert "storage_object_name" not in detail
     assert "storage_path" not in detail
+    assert "visibility_type" not in detail
 
 
 def test_file_remark_can_be_saved_and_cleared(
@@ -229,6 +232,7 @@ def test_file_metadata_rename_hidden_summary_tags_and_search(
     assert len(items) == 1
     assert items[0]["file_id"] == file_id
     assert items[0]["is_hidden"] is True
+    assert "visibility_type" not in items[0]
 
     with Session(get_engine()) as db:
         file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
@@ -411,7 +415,7 @@ def test_file_can_be_moved_and_deleted(
     path_response = client.post(
         "/api/paths",
         headers=auth_headers,
-        json={"path_name": "Archive", "parent_path_id": "root", "path_type": "normal"},
+        json={"path_name": "Archive", "parent_path_id": "root"},
     )
     assert path_response.status_code == 201
     target_path_id = path_response.json()["path_id"]
@@ -578,6 +582,96 @@ def test_document_endpoint_reads_text_markdown_and_html(
         assert body["content"] == content
         assert body["editable"] is True
         assert body["rendered_html"]
+
+
+def test_create_document_uses_encrypted_generated_file_pipeline(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """新建空白文档支持三种格式，并复用随机对象名和加密存储链路。"""
+
+    cases = [
+        ("plain_text", "scratch", "scratch.txt", ".txt", "text/plain"),
+        ("markdown", "notes.txt", "notes.md", ".md", "text/markdown"),
+        ("html", "page", "page.html", ".html", "text/html"),
+    ]
+
+    for document_format, requested_name, expected_name, expected_ext, expected_mime in cases:
+        response = client.post(
+            "/api/files/document",
+            headers=auth_headers,
+            json={
+                "path_id": "root",
+                "original_name": requested_name,
+                "document_format": document_format,
+            },
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert body["original_name"] == expected_name
+        assert body["file_ext"] == expected_ext
+        assert body["mime_type"] == expected_mime
+        assert body["file_type"] == "text"
+        assert body["size_bytes"] == 0
+        assert body["encryption_enabled"] is True
+        assert body["is_hidden"] is False
+        assert "storage_object_name" not in body
+        assert "storage_path" not in body
+        assert "visibility_type" not in body
+
+        read_response = client.get(f"/api/files/{body['file_id']}/document", headers=auth_headers)
+        assert read_response.status_code == 200
+        assert read_response.json()["document_format"] == document_format
+        assert read_response.json()["content"] == ""
+
+        with Session(get_engine()) as db:
+            file_info = db.execute(select(FileInfo).where(FileInfo.file_id == body["file_id"])).scalar_one()
+            assert file_info.storage_object_name != expected_name
+            assert file_info.visibility_type == "normal"
+            object_path = get_settings().storage_root_path / Path(file_info.storage_path)
+            assert object_path.exists()
+            assert object_path.stat().st_size > 0
+
+
+def test_create_hidden_document_respects_session_visibility(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏文档创建后默认不可见，开启当前会话隐藏展示后才可读取。"""
+
+    response = client.post(
+        "/api/files/document",
+        headers=auth_headers,
+        json={
+            "path_id": "root",
+            "original_name": "hidden.md",
+            "document_format": "markdown",
+            "is_hidden": True,
+        },
+    )
+    assert response.status_code == 201
+    file_id = response.json()["file_id"]
+
+    list_response = client.get("/api/files", headers=auth_headers, params={"path_id": "root"})
+    assert list_response.status_code == 200
+    assert [item["file_id"] for item in list_response.json()] == []
+    assert client.get(f"/api/files/{file_id}/document", headers=auth_headers).status_code == 404
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_list_response = client.get("/api/files", headers=auth_headers, params={"path_id": "root"})
+    assert visible_list_response.status_code == 200
+    visible_items = visible_list_response.json()
+    assert [item["file_id"] for item in visible_items] == [file_id]
+    assert visible_items[0]["is_hidden"] is True
+
+    read_response = client.get(f"/api/files/{file_id}/document", headers=auth_headers)
+    assert read_response.status_code == 200
+    assert read_response.json()["content"] == ""
 
 
 def test_document_save_updates_encrypted_content(

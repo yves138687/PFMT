@@ -1,10 +1,5 @@
 from datetime import datetime
-from typing import Literal
-
 from pydantic import BaseModel, Field, field_validator
-
-
-PathType = Literal["normal", "private"]
 
 
 class PathCreateRequest(BaseModel):
@@ -12,7 +7,6 @@ class PathCreateRequest(BaseModel):
 
     path_name: str = Field(min_length=1, max_length=255)
     parent_path_id: str = Field(default="root", max_length=64)
-    path_type: PathType = "normal"
     description: str | None = None
     is_hidden: bool = False
 
@@ -61,7 +55,6 @@ class PathRead(BaseModel):
     path_id: str
     parent_path_id: str | None
     path_name: str
-    path_type: PathType
     path_level: int
     sort_index: int
     full_path: str

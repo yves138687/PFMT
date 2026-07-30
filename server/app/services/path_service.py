@@ -97,7 +97,7 @@ class PathService:
             target_type="file_path",
             target_id=path.path_id,
             result="success",
-            detail={"path_type": path.path_type, "is_hidden": path.is_hidden},
+            detail={"is_hidden": path.is_hidden},
             client_ip=client_ip,
         )
         try:
@@ -429,7 +429,6 @@ class PathService:
             path_id=path.path_id,
             parent_path_id=path.parent_path_id,
             path_name=path.path_name,
-            path_type=path.path_type,  # type: ignore[arg-type]
             path_level=path.path_level,
             sort_index=path.sort_index,
             full_path=path.full_path,

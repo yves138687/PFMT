@@ -18,7 +18,6 @@ describe('pathsApi', () => {
         path_id: 'path_1',
         parent_path_id: 'root',
         path_name: 'Archive',
-        path_type: 'normal',
         path_level: 1,
         sort_index: 1,
         full_path: '/Archive',
@@ -34,7 +33,6 @@ describe('pathsApi', () => {
     await pathsApi.createPath({
       path_name: 'Archive',
       parent_path_id: 'root',
-      path_type: 'normal',
       description: null,
       is_hidden: false
     })
@@ -56,7 +54,6 @@ describe('pathsApi', () => {
           path_id: 'path_1',
           parent_path_id: 'path_2',
           path_name: 'Archive',
-          path_type: 'normal',
           path_level: 2,
           sort_index: 1,
           full_path: '/Target/Archive',
@@ -87,7 +84,6 @@ describe('pathsApi', () => {
         path_id: 'path_1',
         parent_path_id: 'root',
         path_name: 'Archive',
-        path_type: 'normal',
         path_level: 1,
         sort_index: 1,
         full_path: '/Archive',

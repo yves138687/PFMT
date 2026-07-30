@@ -29,7 +29,7 @@ def test_path_tree_and_create_path(client: TestClient, auth_headers: dict[str, s
     created = client.post(
         "/api/paths",
         headers=auth_headers,
-        json={"parent_path_id": "root", "path_name": "阶段一资料", "path_type": "normal"},
+        json={"parent_path_id": "root", "path_name": "阶段一资料"},
     )
     assert created.status_code == 201
     assert created.json()["full_path"] == "/阶段一资料"
