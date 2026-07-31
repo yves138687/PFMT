@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -29,6 +29,8 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import type { DocumentFormat, FileDetail, FileInfo, FilePathNode } from '@/types/files'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
+type FileViewMode = 'list' | 'grid'
+
 interface PathOption {
   label: string
   value: string
@@ -45,10 +47,17 @@ const propertiesVisible = ref(false)
 const propertiesFile = ref<FileInfo | null>(null)
 const createFolderVisible = ref(false)
 const createFolderLoading = ref(false)
+const createDocumentVisible = ref(false)
+const createDocumentLoading = ref(false)
 const moveFileVisible = ref(false)
 const moveFileLoading = ref(false)
 const moveFileTargetPathId = ref('root')
 const selectedFiles = ref<FileInfo[]>([])
+const fileTableRef = ref<{
+  clearSelection: () => void
+  toggleRowSelection: (row: FileInfo, selected?: boolean) => void
+} | null>(null)
+const syncingTableSelection = ref(false)
 const mergeDocumentVisible = ref(false)
 const mergeDocumentLoading = ref(false)
 const mergeDocumentForm = ref<{
@@ -65,6 +74,8 @@ const editPathVisible = ref(false)
 const editPathLoading = ref(false)
 const fileKeyword = ref('')
 const tagFilter = ref<string[]>([])
+const fileTypeFilter = ref<string[]>([])
+const viewMode = ref<FileViewMode>('list')
 const uploadVisible = ref(false)
 const imagePreviewVisible = ref(false)
 const imagePreviewIndex = ref(0)
@@ -89,6 +100,15 @@ const createFolderForm = ref<{
 }>({
   path_name: '',
   description: '',
+  is_hidden: false
+})
+const createDocumentForm = ref<{
+  original_name: string
+  document_format: DocumentFormat
+  is_hidden: boolean
+}>({
+  original_name: '未命名.md',
+  document_format: 'markdown',
   is_hidden: false
 })
 const editPathForm = ref<{
@@ -123,6 +143,18 @@ const tagOptions = computed(() => {
   files.value.forEach((file) => file.tags?.forEach((tag) => names.add(tag.tag_name)))
   return Array.from(names).sort((a, b) => a.localeCompare(b))
 })
+const fileTypeOptions = [
+  { label: '文本', value: 'text' },
+  { label: '图片', value: 'image' },
+  { label: 'PDF', value: 'pdf' },
+  { label: '视频', value: 'video' },
+  { label: '音频', value: 'audio' },
+  { label: '其他', value: 'other' }
+]
+const viewModeOptions = [
+  { label: '列表', value: 'list' },
+  { label: '图标', value: 'grid' }
+]
 const filteredFiles = computed(() => {
   const keyword = fileKeyword.value.trim().toLowerCase()
   return files.value.filter((file) => {
@@ -133,9 +165,11 @@ const filteredFiles = computed(() => {
       (file.summary_content ?? '').toLowerCase().includes(keyword)
     const fileTags = new Set((file.tags ?? []).map((tag) => tag.tag_name))
     const matchesTags = tagFilter.value.every((tagName) => fileTags.has(tagName))
-    return matchesKeyword && matchesTags
+    const matchesType = fileTypeFilter.value.length === 0 || fileTypeFilter.value.includes(file.file_type)
+    return matchesKeyword && matchesTags && matchesType
   })
 })
+const selectedFileIds = computed(() => new Set(selectedFiles.value.map((file) => file.file_id)))
 const imageFiles = computed(() => files.value.filter((file) => file.file_type === 'image'))
 const currentImageFile = computed(() => imageFiles.value[imagePreviewIndex.value] ?? null)
 const currentImageUrl = computed(() => (currentImageFile.value ? imagePreviewUrls.value[currentImageFile.value.file_id] : ''))
@@ -166,6 +200,21 @@ function tagNames(file: FileInfo) {
   return (file.tags ?? []).map((tag) => tag.tag_name).join('、')
 }
 
+function fileTypeText(fileType: FileInfo['file_type']) {
+  const item = fileTypeOptions.find((option) => option.value === fileType)
+  return item?.label ?? '其他'
+}
+
+function defaultDocumentName(format: DocumentFormat) {
+  if (format === 'plain_text') {
+    return '未命名.txt'
+  }
+  if (format === 'html') {
+    return '未命名.html'
+  }
+  return '未命名.md'
+}
+
 function flattenPathOptions(nodes: FilePathNode[], ancestors: string[] = []): PathOption[] {
   return nodes.flatMap((node) => {
     const labelParts = [...ancestors, node.path_name]
@@ -193,6 +242,38 @@ function collectPathIds(node: FilePathNode | null | undefined, ids: Set<string>)
 function normalizeOptionalText(value: string) {
   const normalized = value.trim()
   return normalized ? normalized : null
+}
+
+function isFileSelected(file: FileInfo) {
+  return selectedFileIds.value.has(file.file_id)
+}
+
+function toggleGridFileSelection(file: FileInfo, selected: boolean) {
+  if (selected) {
+    if (!isFileSelected(file)) {
+      selectedFiles.value = [...selectedFiles.value, file]
+    }
+    return
+  }
+  selectedFiles.value = selectedFiles.value.filter((item) => item.file_id !== file.file_id)
+}
+
+async function syncTableSelection() {
+  if (viewMode.value !== 'list' || !fileTableRef.value) {
+    return
+  }
+  syncingTableSelection.value = true
+  try {
+    fileTableRef.value.clearSelection()
+    filteredFiles.value.forEach((file) => {
+      if (selectedFileIds.value.has(file.file_id)) {
+        fileTableRef.value?.toggleRowSelection(file, true)
+      }
+    })
+  } finally {
+    await nextTick()
+    syncingTableSelection.value = false
+  }
 }
 
 async function ensurePathTree() {
@@ -471,6 +552,56 @@ async function openCreateFolder() {
   createFolderVisible.value = true
 }
 
+async function openCreateDocument() {
+  await ensurePathTree()
+  createDocumentForm.value = {
+    original_name: defaultDocumentName('markdown'),
+    document_format: 'markdown',
+    is_hidden: selectedPath.value.is_hidden
+  }
+  createDocumentVisible.value = true
+}
+
+function handleCreateDocumentFormatChange(value: string | number | boolean | undefined) {
+  if (value !== 'plain_text' && value !== 'markdown' && value !== 'html') {
+    return
+  }
+  createDocumentForm.value.document_format = value
+  createDocumentForm.value.original_name = defaultDocumentName(value)
+}
+
+async function createDocument() {
+  const originalName = createDocumentForm.value.original_name.trim()
+  if (!originalName) {
+    ElMessage.warning('请输入文档名称')
+    return
+  }
+
+  createDocumentLoading.value = true
+  try {
+    const created = await filesApi.createDocument({
+      path_id: currentPathId.value,
+      original_name: originalName,
+      document_format: createDocumentForm.value.document_format,
+      is_hidden: createDocumentForm.value.is_hidden
+    })
+    createDocumentVisible.value = false
+    ElMessage.success('文档已创建')
+    await loadFiles()
+    void router.push({
+      name: 'document',
+      params: {
+        fileId: created.file_id
+      },
+      query: {
+        pathId: created.path_id
+      }
+    })
+  } finally {
+    createDocumentLoading.value = false
+  }
+}
+
 async function createFolder() {
   const pathName = createFolderForm.value.path_name.trim()
   if (!pathName) {
@@ -483,7 +614,6 @@ async function createFolder() {
     const created = await pathsApi.createPath({
       path_name: pathName,
       parent_path_id: currentPathId.value,
-      path_type: 'normal',
       description: normalizeOptionalText(createFolderForm.value.description),
       is_hidden: createFolderForm.value.is_hidden
     })
@@ -528,6 +658,9 @@ function openMergeSelectedDocuments() {
 }
 
 function handleSelectionChange(selection: FileInfo[]) {
+  if (syncingTableSelection.value) {
+    return
+  }
   selectedFiles.value = selection
 }
 
@@ -753,8 +886,12 @@ async function loadFiles() {
   loading.value = true
   try {
     files.value = await filesApi.listFiles(currentPathId.value, settingsStore.showHiddenContent)
+    const activeIds = new Set(files.value.map((file) => file.file_id))
+    selectedFiles.value = selectedFiles.value.filter((file) => activeIds.has(file.file_id))
+    void nextTick(syncTableSelection)
   } catch {
     files.value = []
+    selectedFiles.value = []
   } finally {
     loading.value = false
   }
@@ -788,6 +925,14 @@ watch(
   { immediate: true }
 )
 
+watch(
+  [viewMode, filteredFiles],
+  () => {
+    void nextTick(syncTableSelection)
+  },
+  { flush: 'post' }
+)
+
 onBeforeUnmount(() => {
   clearImagePreviewUrls()
   closeVideoPreview()
@@ -803,7 +948,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="folder-view__actions">
         <el-button :icon="FolderAdd" @click="openCreateFolder">新建目录</el-button>
-        <el-button :icon="DocumentAdd">新建文档</el-button>
+        <el-button :icon="DocumentAdd" @click="openCreateDocument">新建文档</el-button>
         <el-button :icon="Edit" :disabled="currentPathIsRoot" @click="openEditPath">编辑目录</el-button>
         <el-button :icon="Rank" :disabled="currentPathIsRoot" @click="openMovePath">移动目录</el-button>
         <el-button type="danger" plain :icon="FolderDelete" :disabled="currentPathIsRoot" @click="deleteCurrentPath">
@@ -818,28 +963,33 @@ onBeforeUnmount(() => {
         <h2>文件列表</h2>
         <div class="folder-view__toolbar">
           <el-input v-model="fileKeyword" clearable placeholder="筛选文件名、备注、摘要" class="folder-view__filter" />
+          <el-select v-model="fileTypeFilter" multiple clearable collapse-tags placeholder="类型筛选" class="folder-view__filter">
+            <el-option v-for="option in fileTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
           <el-select v-model="tagFilter" multiple clearable collapse-tags placeholder="标签筛选" class="folder-view__filter">
             <el-option v-for="tagName in tagOptions" :key="tagName" :label="tagName" :value="tagName" />
           </el-select>
           <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFiles">
             移动所选
           </el-button>
-          <el-button :icon="DocumentAdd" :disabled="selectedFiles.length < 2" @click="openMergeSelectedDocuments">
+          <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
             合并文档
           </el-button>
           <el-button :icon="Refresh" :loading="loading" @click="loadFiles">刷新</el-button>
-          <el-segmented :model-value="'list'" :options="['list', 'grid']" disabled />
+          <el-segmented v-model="viewMode" :options="viewModeOptions" />
         </div>
       </div>
-      <div class="panel-body">
+      <div v-loading="loading" class="panel-body">
         <el-table
-          v-loading="loading"
+          v-if="viewMode === 'list'"
+          ref="fileTableRef"
           :data="filteredFiles"
           border
+          row-key="file_id"
           empty-text="当前目录暂无文件"
           @selection-change="handleSelectionChange"
         >
-          <el-table-column type="selection" width="46" />
+          <el-table-column type="selection" width="46" reserve-selection />
           <el-table-column label="真实文件名" min-width="220">
             <template #default="{ row }">
               <span class="folder-view__file-name">
@@ -852,7 +1002,9 @@ onBeforeUnmount(() => {
           <el-table-column v-if="settingsStore.showHiddenContent" label="状态" width="90">
             <template #default="{ row }">{{ row.is_hidden ? '隐藏' : '显示' }}</template>
           </el-table-column>
-          <el-table-column prop="file_type" label="文件类型" width="120" />
+          <el-table-column label="文件类型" width="120">
+            <template #default="{ row }">{{ fileTypeText(row.file_type) }}</template>
+          </el-table-column>
           <el-table-column label="大小" width="120">
             <template #default="{ row }">{{ formatFileSize(row.size_bytes) }}</template>
           </el-table-column>
@@ -876,6 +1028,41 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
         </el-table>
+        <div v-else-if="filteredFiles.length" class="folder-view__grid" aria-label="图标视图文件列表">
+          <article
+            v-for="file in filteredFiles"
+            :key="file.file_id"
+            class="file-card"
+            :class="{ 'file-card--selected': isFileSelected(file) }"
+            @dblclick="openFileDetail(file)"
+          >
+            <div class="file-card__top">
+              <el-checkbox
+                :model-value="isFileSelected(file)"
+                :aria-label="`选择${file.original_name}`"
+                @change="(value: string | number | boolean) => toggleGridFileSelection(file, Boolean(value))"
+              />
+              <el-tag v-if="settingsStore.showHiddenContent && file.is_hidden" size="small" type="warning">隐藏</el-tag>
+            </div>
+            <button class="file-card__main" type="button" :disabled="!canOpenPreview(file)" @click="openFileDetail(file)">
+              <span class="file-card__icon">{{ fileTypeText(file.file_type).slice(0, 1) }}</span>
+              <strong>{{ file.original_name }}</strong>
+              <small>{{ fileTypeText(file.file_type) }} · {{ formatFileSize(file.size_bytes) }}</small>
+              <small v-if="file.tags?.length">{{ tagNames(file) }}</small>
+            </button>
+            <div class="file-card__actions">
+              <el-button link type="primary" :icon="View" :disabled="!canOpenPreview(file)" @click="openFileDetail(file)">
+                查看
+              </el-button>
+              <el-button link :icon="InfoFilled" @click="openProperties(file)">属性</el-button>
+              <el-button link :icon="View" @click="toggleFileHidden(file)">
+                {{ file.is_hidden ? '显示' : '隐藏' }}
+              </el-button>
+              <el-button link type="danger" :icon="Delete" @click="deleteFile(file)">删除</el-button>
+            </div>
+          </article>
+        </div>
+        <el-empty v-else description="当前目录暂无文件" />
       </div>
     </section>
 
@@ -892,6 +1079,28 @@ onBeforeUnmount(() => {
       :target-full-path="selectedPath.full_path"
       @uploaded="handleUploadCompleted"
     />
+
+    <el-dialog v-model="createDocumentVisible" title="新建文档" width="460px">
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="文档格式">
+          <el-select :model-value="createDocumentForm.document_format" @change="handleCreateDocumentFormatChange">
+            <el-option label="Markdown" value="markdown" />
+            <el-option label="纯文本" value="plain_text" />
+            <el-option label="HTML" value="html" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="文档名称">
+          <el-input v-model="createDocumentForm.original_name" maxlength="512" show-word-limit autofocus />
+        </el-form-item>
+        <el-form-item label="隐藏文档">
+          <el-switch v-model="createDocumentForm.is_hidden" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDocumentVisible = false">取消</el-button>
+        <el-button type="primary" :loading="createDocumentLoading" @click="createDocument">创建并打开</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="mergeDocumentVisible" title="合并为新文档" width="460px">
       <el-form label-position="top">
@@ -1164,6 +1373,86 @@ onBeforeUnmount(() => {
   color: var(--pfmt-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.folder-view__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.file-card {
+  display: grid;
+  min-width: 0;
+  min-height: 210px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid var(--pfmt-border);
+  border-radius: 8px;
+}
+
+.file-card--selected {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgb(64 158 255 / 14%);
+}
+
+.file-card__top,
+.file-card__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.file-card__main {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 8px;
+  color: inherit;
+  text-align: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.file-card__main:disabled {
+  cursor: default;
+}
+
+.file-card__icon {
+  display: grid;
+  width: 54px;
+  height: 54px;
+  align-items: center;
+  justify-items: center;
+  color: #1f2937;
+  background: #f3f6fb;
+  border: 1px solid var(--pfmt-border);
+  border-radius: 8px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.file-card__main strong,
+.file-card__main small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-card__main small {
+  color: var(--pfmt-text-muted);
+}
+
+.file-card__actions {
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .folder-view__path-select {

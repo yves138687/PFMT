@@ -108,7 +108,6 @@ def _compat_tree_node(node: Any) -> dict[str, Any]:
         "parent_path_id": node.parent_path_id,
         "name": node.path_name,
         "path_name": node.path_name,
-        "path_type": node.path_type,
         "full_path": node.full_path,
         "is_hidden": node.is_hidden,
         "children": [_compat_tree_node(child) for child in node.children],
@@ -284,7 +283,6 @@ def create_file_path_compat(
         payload=PathCreateRequest(
             parent_path_id=payload.parent_id,
             path_name=payload.name,
-            path_type=payload.path_type,  # type: ignore[arg-type]
             is_hidden=payload.is_hidden,
             description=payload.description,
         ),

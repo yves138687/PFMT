@@ -62,14 +62,38 @@ describe('FolderView source contract', () => {
     expect(source).toContain('mergeSelectedDocuments')
     expect(source).toContain('filesApi.mergeDocuments')
     expect(source).toContain('selectedDocumentFiles')
+    expect(source).toContain('canMergeSelectedDocuments')
+    expect(source).toContain(':disabled="!canMergeSelectedDocuments"')
     expect(source).toContain('按原始文件名升序合并')
+    expect(source).toContain("name: 'document'")
+  })
+
+  it('creates blank documents from the current folder', () => {
+    expect(source).toContain('@click="openCreateDocument"')
+    expect(source).toContain('createDocumentVisible')
+    expect(source).toContain('filesApi.createDocument')
+    expect(source).toContain('创建并打开')
+    expect(source).toContain('document_format')
     expect(source).toContain("name: 'document'")
   })
 
   it('offers local metadata filters without exposing hidden content by default', () => {
     expect(source).toContain('筛选文件名、备注、摘要')
+    expect(source).toContain('类型筛选')
+    expect(source).toContain('fileTypeFilter')
     expect(source).toContain('标签筛选')
     expect(source).toContain('settingsStore.showHiddenContent')
+  })
+
+  it('supports list and icon management views with shared selection', () => {
+    expect(source).toContain("type FileViewMode = 'list' | 'grid'")
+    expect(source).toContain('v-model="viewMode"')
+    expect(source).toContain('folder-view__grid')
+    expect(source).toContain('file-card')
+    expect(source).toContain('toggleGridFileSelection')
+    expect(source).toContain('isFileSelected(file)')
+    expect(source).toContain('@selection-change="handleSelectionChange"')
+    expect(source).toContain('selectedFiles.value')
   })
 
   it('does not expose private directory type in create folder dialog', () => {

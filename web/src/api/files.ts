@@ -1,6 +1,7 @@
 import { http } from './http'
 import type {
   DocumentContent,
+  DocumentCreatePayload,
   DocumentConvertPayload,
   DocumentMergePayload,
   DocumentSavePayload,
@@ -85,6 +86,9 @@ export const filesApi = {
   },
   getDocument(fileId: string, _showHidden?: boolean) {
     return http.get<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`)
+  },
+  createDocument(payload: DocumentCreatePayload) {
+    return http.post<FileDetail>('/files/document', payload)
   },
   saveDocument(fileId: string, payload: DocumentSavePayload, _showHidden?: boolean) {
     return http.put<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`, payload)

@@ -22,6 +22,7 @@ from app.repositories.file_repository import FileRepository, FileTagRepository
 from app.repositories.path_repository import PathRepository
 from app.repositories.session_repository import SessionRepository
 from app.schemas.file import (
+    DocumentCreateRequest,
     DocumentConvertRequest,
     DocumentMergeRequest,
     DocumentReadResponse,
@@ -296,6 +297,73 @@ class FileService:
             if stored_object is not None:
                 self.storage_service.delete_object(stored_object.storage_path)
             self._record_failed_upload(current_user.user_id, client_ip, "upload_failed")
+            raise
+
+    def create_document(
+        self,
+        *,
+        payload: DocumentCreateRequest,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileDetailResponse:
+        """创建空白文档，复用随机对象名和可选加密写入链路。"""
+
+        parent_path = self.path_repository.get_active_by_path_id(payload.path_id)
+        if parent_path is None:
+            self._record_file_action_failure(
+                user_id=current_user.user_id,
+                client_ip=client_ip,
+                file_id="",
+                action_type="create_document",
+                reason="path_not_found",
+            )
+            raise NotFoundError("目录不存在")
+
+        target_name = payload.original_name
+        target_ext = normalize_extension(target_name)
+        expected_ext = document_format_extension(payload.document_format)
+        if target_ext != expected_ext:
+            target_name = f"{Path(target_name).stem}{expected_ext}"
+
+        created_file: FileInfo | None = None
+        try:
+            created_file = self._create_generated_document_file(
+                path_id=parent_path.path_id,
+                target_name=target_name,
+                target_format=payload.document_format,
+                content="",
+                current_user=current_user,
+                is_hidden=payload.is_hidden,
+            )
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="create_document",
+                target_type="file",
+                target_id=created_file.file_id,
+                result="success",
+                detail={
+                    "path_id": parent_path.path_id,
+                    "document_format": payload.document_format,
+                    "is_hidden": payload.is_hidden,
+                },
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            self.db.refresh(created_file)
+            return self._to_detail_response(created_file, parent_path)
+        except Exception:
+            self.db.rollback()
+            if created_file is not None:
+                self.storage_service.delete_object(created_file.storage_path)
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="create_document",
+                target_type="file",
+                result="failed",
+                detail={"reason": "create_failed", "path_id": parent_path.path_id},
+                client_ip=client_ip,
+            )
+            self.db.commit()
             raise
 
     def read_markdown(
@@ -1353,6 +1421,7 @@ class FileService:
         content: str,
         current_user: UserAccount,
         source_file: FileInfo | None = None,
+        is_hidden: bool | None = None,
     ) -> FileInfo:
         target_file_id = new_business_id("file")
         should_encrypt = self.setting_service.get_bool("storage.encryption_enabled", True)
@@ -1380,8 +1449,8 @@ class FileService:
                 summary_content=source_file.summary_content if source_file else None,
                 summary_source=source_file.summary_source if source_file else None,
                 summary_updated_at=source_file.summary_updated_at if source_file else None,
-                is_hidden=source_file.is_hidden if source_file else False,
-                visibility_type=source_file.visibility_type if source_file else "normal",
+                is_hidden=is_hidden if is_hidden is not None else (source_file.is_hidden if source_file else False),
+                visibility_type="normal",
                 created_by=current_user.user_id,
                 updated_by=current_user.user_id,
             )
@@ -1480,7 +1549,6 @@ class FileService:
             size_bytes=file_info.size_bytes,
             encryption_enabled=file_info.encryption_enabled,
             is_hidden=file_info.is_hidden,
-            visibility_type=file_info.visibility_type,
             status=file_info.status,
             remark=file_info.remark,
             summary_content=file_info.summary_content,
@@ -1520,7 +1588,6 @@ class FileService:
             encryption_enabled=file_info.encryption_enabled,
             key_wrap_version=file_info.key_wrap_version,
             is_hidden=file_info.is_hidden,
-            visibility_type=file_info.visibility_type,
             status=file_info.status,
             created_at=file_info.created_at or now_utc(),
             updated_at=file_info.updated_at or now_utc(),

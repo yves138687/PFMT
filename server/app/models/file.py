@@ -18,7 +18,7 @@ from app.core.security import now_utc
 
 
 class FilePath(Base):
-    """目录树节点，承载普通路径、私密路径和隐藏状态。"""
+    """目录树节点；path_type 仅作为历史兼容字段保留，隐藏规则以 is_hidden 为准。"""
 
     __tablename__ = "file_path"
     __table_args__ = (

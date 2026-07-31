@@ -29,7 +29,6 @@ class FileUploadResponse(BaseModel):
     encryption_enabled: bool
     key_wrap_version: str | None
     is_hidden: bool
-    visibility_type: str
     status: str
     created_at: datetime
     updated_at: datetime
@@ -48,7 +47,6 @@ class FileListItem(BaseModel):
     size_bytes: int
     encryption_enabled: bool
     is_hidden: bool
-    visibility_type: str
     status: str
     remark: str | None = None
     summary_content: str | None = None
@@ -95,6 +93,32 @@ class FileMoveRequest(BaseModel):
     """移动文件请求，只调整业务目录归属。"""
 
     path_id: str = Field(max_length=64)
+
+
+class DocumentCreateRequest(BaseModel):
+    """创建空白文本、Markdown 或 HTML 文档。"""
+
+    path_id: str = Field(default="root", max_length=64)
+    original_name: str = Field(min_length=1, max_length=512)
+    document_format: DocumentFormat
+    is_hidden: bool = False
+
+    @field_validator("original_name")
+    @classmethod
+    def validate_original_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("文件名不能为空")
+        if "/" in normalized or "\\" in normalized:
+            raise ValueError("文件名不能包含路径分隔符")
+        return normalized
+
+    @field_validator("document_format")
+    @classmethod
+    def validate_document_format(cls, value: str) -> str:
+        if value not in {"plain_text", "markdown", "html"}:
+            raise ValueError("不支持的文档格式")
+        return value
 
 
 class MarkdownReadResponse(BaseModel):

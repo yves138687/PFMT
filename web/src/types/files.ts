@@ -1,5 +1,4 @@
 export type FileType = 'text' | 'image' | 'video' | 'pdf' | 'audio' | 'other'
-export type VisibilityType = 'normal' | 'private'
 export type DocumentFormat = 'plain_text' | 'markdown' | 'html'
 
 export interface FileInfo {
@@ -17,7 +16,6 @@ export interface FileInfo {
   remark?: string | null
   tags?: FileTag[]
   is_hidden: boolean
-  visibility_type: VisibilityType
   status?: string
   created_at?: string
   updated_at?: string
@@ -38,7 +36,6 @@ export interface FilePathNode {
   path_id: string
   parent_path_id: string | null
   path_name: string
-  path_type: VisibilityType
   path_level: number
   full_path: string
   description?: string | null
@@ -49,7 +46,6 @@ export interface FilePathNode {
 export interface PathCreatePayload {
   path_name: string
   parent_path_id: string
-  path_type: VisibilityType
   description?: string | null
   is_hidden: boolean
 }
@@ -120,6 +116,13 @@ export interface DocumentContent {
 export interface DocumentSavePayload {
   content: string
   document_format: DocumentFormat
+}
+
+export interface DocumentCreatePayload {
+  path_id: string
+  original_name: string
+  document_format: DocumentFormat
+  is_hidden?: boolean
 }
 
 export interface DocumentConvertPayload {

@@ -7,7 +7,6 @@ const ROOT_PATH: FilePathNode = {
   path_id: 'root',
   parent_path_id: null,
   path_name: '根目录',
-  path_type: 'normal',
   path_level: 0,
   full_path: '/',
   is_hidden: false,
