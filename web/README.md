@@ -5,10 +5,10 @@ Vue 3 + TypeScript + Vite + Pinia + Element Plus frontend for the first PFMT pha
 ## Scripts
 
 ```bash
-pnpm install
-pnpm dev
-pnpm test
-pnpm build
+npm install
+npm run dev
+npm test
+npm run build
 ```
 
 ## API Base

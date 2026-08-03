@@ -147,3 +147,64 @@ function Get-PfmtEnvValue {
     }
     return $value
 }
+
+function Resolve-PfmtPath {
+    param(
+        [Parameter(Mandatory)][string]$Root,
+        [Parameter(Mandatory)][string]$Path
+    )
+
+    $expandedPath = [Environment]::ExpandEnvironmentVariables($Path.Trim())
+    if ([System.IO.Path]::IsPathRooted($expandedPath)) {
+        return [System.IO.Path]::GetFullPath($expandedPath)
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path $Root $expandedPath))
+}
+
+function Get-PfmtStorageRoot {
+    param([Parameter(Mandatory)][string]$Root)
+
+    $rawStorageRoot = Get-PfmtEnvValue -Name 'PFMT_STORAGE_ROOT' -Default './storage'
+    return Resolve-PfmtPath -Root $Root -Path $rawStorageRoot
+}
+
+function Get-PfmtLanIpAddresses {
+    try {
+        return @(
+            [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+                Where-Object {
+                    $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+                    -not [System.Net.IPAddress]::IsLoopback($_) -and
+                    -not $_.ToString().StartsWith('169.254.')
+                } |
+                ForEach-Object { $_.ToString() } |
+                Sort-Object -Unique
+        )
+    }
+    catch {
+        return @()
+    }
+}
+
+function Write-PfmtAccessUrls {
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$HostName,
+        [Parameter(Mandatory)][int]$Port
+    )
+
+    if ($HostName -in @('0.0.0.0', '::', '*')) {
+        Write-PfmtInfo ("{0} 本机访问：http://127.0.0.1:{1}" -f $Name, $Port)
+        $lanIps = @(Get-PfmtLanIpAddresses)
+        foreach ($ip in $lanIps) {
+            Write-PfmtInfo ("{0} 局域网访问：http://{1}:{2}" -f $Name, $ip, $Port)
+        }
+        if ($lanIps.Count -eq 0) {
+            Write-PfmtWarn ("未能自动识别局域网 IP，请用 ipconfig 查看本机 IPv4 后访问 http://<IPv4>:{0}" -f $Port)
+        }
+        return
+    }
+
+    Write-PfmtInfo ("{0} 访问地址：http://{1}:{2}" -f $Name, $HostName, $Port)
+}

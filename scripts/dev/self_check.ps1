@@ -83,6 +83,7 @@ $requiredDevFiles = @(
     '.env.example',
     'scripts\dev\environment.yml',
     'scripts\dev\bootstrap_dev.ps1',
+    'scripts\dev\start_all.bat',
     'scripts\dev\start_server.ps1',
     'scripts\dev\start_web.ps1',
     'scripts\dev\run_tests.ps1',
@@ -160,14 +161,27 @@ if (Test-Path -LiteralPath $contractJsonPath) {
     }
 }
 
-$storageDirs = @('storage\db', 'storage\data', 'storage\tmp', 'storage\preview', 'storage\backup')
+$storageRoot = Get-PfmtStorageRoot -Root $root
+$storageDirs = @('', 'db', 'data', 'tmp', 'preview', 'backup', 'logs', 'objects')
 foreach ($storageDir in $storageDirs) {
-    $target = Join-Path $root $storageDir
-    if (Test-Path -LiteralPath $target) {
-        Add-PfmtCheckResult -Level 'PASS' -Name $storageDir
+    $target = if ([string]::IsNullOrWhiteSpace($storageDir)) {
+        $storageRoot
     }
     else {
-        Add-PfmtCheckResult -Level 'WARN' -Name $storageDir -Detail '运行 bootstrap_dev.ps1 后会创建。'
+        Join-Path $storageRoot $storageDir
+    }
+    $checkName = if ([string]::IsNullOrWhiteSpace($storageDir)) {
+        "PFMT_STORAGE_ROOT ($storageRoot)"
+    }
+    else {
+        "$storageDir ($target)"
+    }
+
+    if (Test-Path -LiteralPath $target) {
+        Add-PfmtCheckResult -Level 'PASS' -Name $checkName
+    }
+    else {
+        Add-PfmtCheckResult -Level 'WARN' -Name $checkName -Detail '运行 bootstrap_dev.ps1 后会创建。'
     }
 }
 

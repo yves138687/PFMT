@@ -11,6 +11,9 @@ import type { FilePathNode } from '@/types/files'
 const router = useRouter()
 const pathStore = usePathStore()
 const settingsStore = useSettingsStore()
+const emit = defineEmits<{
+  navigate: []
+}>()
 const filterText = ref('')
 const treeRef = ref<InstanceType<typeof ElTree>>()
 
@@ -41,6 +44,7 @@ function handleNodeClick(node: FilePathNode) {
       pathId: node.path_id
     }
   })
+  emit('navigate')
 }
 
 function openUploadDialog() {
@@ -53,6 +57,12 @@ function openUploadDialog() {
       upload: '1'
     }
   })
+  emit('navigate')
+}
+
+function openSettings() {
+  void router.push({ name: 'settings' })
+  emit('navigate')
 }
 
 watch(filterText, (value) => {
@@ -110,7 +120,7 @@ onMounted(() => {
 
     <div class="directory-tree__footer">
       <el-button type="primary" plain @click="openUploadDialog">上传文件</el-button>
-      <el-button @click="router.push({ name: 'settings' })">系统配置</el-button>
+      <el-button @click="openSettings">系统配置</el-button>
     </div>
   </aside>
 </template>

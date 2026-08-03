@@ -2,10 +2,11 @@
 
 param(
     [ValidateSet('pnpm', 'npm')]
-    [string]$PackageManager = 'pnpm',
+    [string]$PackageManager = 'npm',
     [string]$HostName = '',
     [int]$Port = 0,
-    [switch]$SkipInstall
+    [switch]$SkipInstall,
+    [switch]$DryRun
 )
 
 . "$PSScriptRoot\pfmt-dev-common.ps1"
@@ -14,7 +15,7 @@ $root = Get-PfmtRoot
 Import-PfmtDotEnv -Root $root
 
 if ([string]::IsNullOrWhiteSpace($HostName)) {
-    $HostName = Get-PfmtEnvValue -Name 'PFMT_WEB_HOST' -Default '127.0.0.1'
+    $HostName = Get-PfmtEnvValue -Name 'PFMT_WEB_HOST' -Default '0.0.0.0'
 }
 
 if ($Port -le 0) {
@@ -28,21 +29,47 @@ if (-not (Test-Path -LiteralPath $packageJson)) {
     throw "尚未找到前端入口 web/package.json。主线程初始化 Vue 3 + Vite 后，可直接复用本脚本启动。"
 }
 
-if ($PackageManager -eq 'pnpm' -and $null -eq (Get-Command pnpm -ErrorAction SilentlyContinue)) {
-    throw "未找到 pnpm。请安装 Node.js 20+ 后执行 corepack enable，或改用 -PackageManager npm。"
-}
-
+Set-Location -LiteralPath $webDir
+Write-PfmtInfo "前端工作目录：$webDir"
 Assert-PfmtCommand -Name $PackageManager
 
-if (-not $SkipInstall) {
-    $installArgs = @('install')
-    if ($PackageManager -eq 'pnpm' -and (Test-Path -LiteralPath (Join-Path $webDir 'pnpm-lock.yaml'))) {
-        $installArgs += '--frozen-lockfile'
-    }
+function Test-PfmtWebCommand {
+    param([Parameter(Mandatory)][string]$Name)
 
-    # 本地启动前校验依赖；CI 可通过 -SkipInstall 交给流水线缓存。
-    Write-PfmtInfo "安装或校验前端依赖：$PackageManager $($installArgs -join ' ')"
-    Invoke-PfmtNative -Command $PackageManager -Arguments $installArgs -WorkingDirectory $webDir
+    return (
+        (Test-Path -LiteralPath (Join-Path $webDir "node_modules\.bin\$Name.cmd")) -or
+        (Test-Path -LiteralPath (Join-Path $webDir "node_modules\.bin\$Name"))
+    )
+}
+
+$hasViteCommand = Test-PfmtWebCommand -Name 'vite'
+
+if ($DryRun) {
+    $viteStatus = if ($hasViteCommand) { '已存在' } else { '缺失' }
+    Write-PfmtInfo "Vite 启动命令：$viteStatus"
+    Write-PfmtAccessUrls -Name '前端' -HostName $HostName -Port $Port
+    Write-PfmtInfo "前端启动预检完成：$PackageManager"
+    exit 0
+}
+
+if (-not $SkipInstall) {
+    if ($hasViteCommand) {
+        Write-PfmtOk '已检测到前端依赖，跳过 npm install。'
+    }
+    else {
+        if ($PackageManager -eq 'npm' -and (Test-Path -LiteralPath (Join-Path $webDir 'node_modules\.pnpm'))) {
+            throw "检测到 pnpm 结构的 web\node_modules，但未找到 Vite 启动命令。请清理 web\node_modules 后再用 npm 重新安装。"
+        }
+
+        $installArgs = @('install')
+        if ($PackageManager -eq 'pnpm' -and (Test-Path -LiteralPath (Join-Path $webDir 'pnpm-lock.yaml'))) {
+            $installArgs += '--frozen-lockfile'
+        }
+
+        # 本地启动前校验依赖；CI 可通过 -SkipInstall 交给流水线缓存。
+        Write-PfmtInfo "安装前端依赖：$PackageManager $($installArgs -join ' ')"
+        Invoke-PfmtNative -Command $PackageManager -Arguments $installArgs -WorkingDirectory $webDir
+    }
 }
 
 if ($PackageManager -eq 'pnpm') {
@@ -52,5 +79,5 @@ else {
     $devArgs = @('run', 'dev', '--', '--host', $HostName, '--port', [string]$Port)
 }
 
-Write-PfmtInfo "启动前端：http://$HostName`:$Port"
+Write-PfmtAccessUrls -Name '前端' -HostName $HostName -Port $Port
 Invoke-PfmtNative -Command $PackageManager -Arguments $devArgs -WorkingDirectory $webDir

@@ -5,7 +5,7 @@
 - [ ] 使用 `pwsh ./scripts/dev/bootstrap_dev.ps1 -CreateLocalEnvFile` 创建 `pfmt-py312`。
 - [ ] `conda run -n pfmt-py312 python --version` 输出 Python 3.12。
 - [ ] `.env` 由 `.env.example` 本地复制得到，且示例密钥已经替换成本机开发值。
-- [ ] `storage/db`、`storage/data`、`storage/tmp`、`storage/preview`、`storage/backup` 均存在。
+- [ ] `PFMT_STORAGE_ROOT` 指向的存储根目录及其 `db`、`data`、`tmp`、`preview`、`backup`、`logs`、`objects` 子目录均存在。
 - [ ] `.env`、SQLite 数据库、日志、密文对象和缓存没有被 Git 跟踪。
 
 ## 后端

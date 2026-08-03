@@ -49,5 +49,5 @@ if (-not $NoReload) {
     $uvicornArgs += '--reload'
 }
 
-Write-PfmtInfo "启动后端：http://$HostName`:$Port"
+Write-PfmtAccessUrls -Name '后端' -HostName $HostName -Port $Port
 Invoke-PfmtCondaRun -EnvName $EnvName -Command $uvicornArgs -WorkingDirectory $root

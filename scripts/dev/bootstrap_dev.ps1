@@ -9,7 +9,9 @@ param(
 . "$PSScriptRoot\pfmt-dev-common.ps1"
 
 $root = Get-PfmtRoot
+Import-PfmtDotEnv -Root $root
 $environmentFile = Join-Path $PSScriptRoot 'environment.yml'
+$storageRoot = Get-PfmtStorageRoot -Root $root
 
 Write-PfmtInfo "准备 PFMT 本地 Python 3.12 开发环境：$EnvName"
 
@@ -38,21 +40,29 @@ else {
 }
 
 # 开发期目录只存放本地数据库、密文对象、临时文件和预览缓存。
+# 存储根目录跟随 PFMT_STORAGE_ROOT；未配置时默认使用仓库下的 storage。
 $storageDirs = @(
-    'storage',
-    'storage\db',
-    'storage\data',
-    'storage\tmp',
-    'storage\preview',
-    'storage\backup',
-    'storage\logs'
+    '',
+    'db',
+    'data',
+    'tmp',
+    'preview',
+    'backup',
+    'logs',
+    'objects'
 )
 
 foreach ($relativePath in $storageDirs) {
-    $target = Join-Path $root $relativePath
+    $target = if ([string]::IsNullOrWhiteSpace($relativePath)) {
+        $storageRoot
+    }
+    else {
+        Join-Path $storageRoot $relativePath
+    }
+
     if (-not (Test-Path -LiteralPath $target)) {
         New-Item -ItemType Directory -Force -Path $target | Out-Null
-        Write-PfmtOk "已创建目录：$relativePath"
+        Write-PfmtOk "已创建目录：$target"
     }
 }
 
@@ -76,6 +86,7 @@ if ($CreateLocalEnvFile) {
 Write-PfmtOk "开发环境准备完成。"
 Write-Host ''
 Write-Host '常用命令：'
+Write-Host '  scripts\dev\start_all.bat'
 Write-Host '  pwsh ./scripts/dev/start_server.ps1'
 Write-Host '  pwsh ./scripts/dev/start_web.ps1'
 Write-Host '  pwsh ./scripts/dev/run_tests.ps1'
