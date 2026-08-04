@@ -46,12 +46,52 @@ def test_dev_scripts_exist_and_keep_chinese_notes() -> None:
         assert re.search(r"[\u4e00-\u9fff]", content), f"{script_path} should keep Chinese notes"
 
 
+def test_windows_one_click_startup_bat_exists() -> None:
+    bat_text = read_text("scripts/dev/start_all.bat")
+
+    assert "start_server.ps1" in bat_text
+    assert "start_web.ps1" in bat_text
+    assert "WEB_DIR=%ROOT_DIR%\\web" in bat_text
+    assert "pwsh" in bat_text
+    assert "-PackageManager npm" in bat_text
+    assert "Close those windows to stop the services." in bat_text
+    assert re.search(r"(?m)^exit /b 0$", bat_text)
+    assert "--dry-run" in bat_text
+
+
+def test_dev_scripts_respect_configured_storage_root() -> None:
+    common_script = read_text("scripts/dev/pfmt-dev-common.ps1")
+    bootstrap_script = read_text("scripts/dev/bootstrap_dev.ps1")
+    self_check_script = read_text("scripts/dev/self_check.ps1")
+
+    assert "function Get-PfmtStorageRoot" in common_script
+    assert "PFMT_STORAGE_ROOT" in common_script
+    assert "function Write-PfmtAccessUrls" in common_script
+    assert "Get-PfmtStorageRoot -Root $root" in bootstrap_script
+    assert "Get-PfmtStorageRoot -Root $root" in self_check_script
+
+
+def test_frontend_scripts_use_npm_by_default() -> None:
+    start_web_script = read_text("scripts/dev/start_web.ps1")
+    run_tests_script = read_text("scripts/dev/run_tests.ps1")
+
+    assert "[string]$PackageManager = 'npm'" in start_web_script
+    assert "Default '0.0.0.0'" in start_web_script
+    assert "Set-Location -LiteralPath $webDir" in start_web_script
+    assert "Test-PfmtWebCommand -Name 'vite'" in start_web_script
+    assert "Write-PfmtAccessUrls -Name '前端'" in start_web_script
+    assert "Assert-PfmtCommand -Name $PackageManager" in start_web_script
+    assert "Invoke-PfmtNative -Command 'npm'" in run_tests_script
+
+
 def test_env_example_contains_only_placeholders() -> None:
     env_text = read_text(".env.example")
 
     assert "PFMT_JWT_SECRET_KEY=replace_with_" in env_text
     assert "PFMT_FILE_MASTER_KEY=replace_with_" in env_text
-    assert "PFMT_DATABASE_URL=sqlite:///./storage/db/pfmt-dev.sqlite3" in env_text
+    assert "PFMT_WEB_HOST=0.0.0.0" in env_text
+    assert "PFMT_STORAGE_ROOT=./storage" in env_text
+    assert "# PFMT_DATABASE_URL=sqlite:///./storage/pfmt.sqlite3" in env_text
 
     forbidden_secret_patterns = [
         r"sk-[A-Za-z0-9_-]{20,}",

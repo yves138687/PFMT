@@ -16,6 +16,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
 
     db_path = tmp_path / "pfmt.sqlite3"
     storage_root = tmp_path / "storage"
+    storage_root.mkdir()
     monkeypatch.setenv("PFMT_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("PFMT_STORAGE_ROOT", storage_root.as_posix())
     monkeypatch.setenv("PFMT_JWT_SECRET_KEY", "test-jwt-secret-with-at-least-32-bytes")

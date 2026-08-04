@@ -1,10 +1,13 @@
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.database import get_engine
+from app.core.database import get_engine, reset_database_state
+from app.main import create_app
 from app.models.file import FileInfo, FilePath
+from app.services.storage_service import WINDOWS_MAX_COMPONENT_CHARS, WINDOWS_SAFE_MAX_PATH_CHARS
 
 
 def test_path_tree_and_create_path(client: TestClient, auth_headers: dict[str, str]) -> None:
@@ -85,6 +88,28 @@ def test_hidden_path_requires_session_switch(
         assert hidden_path.path_type == "normal"
 
 
+def test_path_uses_short_physical_storage_name(client: TestClient, auth_headers: dict[str, str]) -> None:
+    """目录真实存储名固定短度，不随展示名变长，也不暴露明文。"""
+
+    long_name = "Very-Long-Directory-Name-" + "x" * 120
+    create_response = client.post(
+        "/api/v1/paths",
+        headers=auth_headers,
+        json={"path_name": long_name, "parent_path_id": "root"},
+    )
+
+    assert create_response.status_code == 201
+    created = create_response.json()
+    with Session(get_engine()) as db:
+        path = db.execute(select(FilePath).where(FilePath.path_id == created["path_id"])).scalar_one()
+        physical_path = get_settings().storage_root_path / path.storage_path
+        assert physical_path.exists()
+        assert path.storage_name is not None
+        assert long_name not in path.storage_name
+        assert len(path.storage_name) <= WINDOWS_MAX_COMPONENT_CHARS
+        assert len(str(physical_path)) <= WINDOWS_SAFE_MAX_PATH_CHARS
+
+
 def test_path_can_be_moved_with_descendants(client: TestClient, auth_headers: dict[str, str]) -> None:
     """目录移动会同步更新目录本身和子目录的完整路径。"""
 
@@ -103,6 +128,9 @@ def test_path_can_be_moved_with_descendants(client: TestClient, auth_headers: di
         headers=auth_headers,
         json={"path_name": "Child", "parent_path_id": source["path_id"]},
     ).json()
+    with Session(get_engine()) as db:
+        source_path = db.execute(select(FilePath).where(FilePath.path_id == source["path_id"])).scalar_one()
+        old_source_physical_path = get_settings().storage_root_path / source_path.storage_path
 
     move_response = client.patch(
         f"/api/v1/paths/{source['path_id']}/move",
@@ -119,8 +147,12 @@ def test_path_can_be_moved_with_descendants(client: TestClient, auth_headers: di
         child_path = db.execute(
             select(FilePath).where(FilePath.path_id == child["path_id"])
         ).scalar_one()
+        moved_source_path = db.execute(select(FilePath).where(FilePath.path_id == source["path_id"])).scalar_one()
         assert child_path.full_path == "/Target/Source/Child"
         assert child_path.path_level == 3
+        assert not old_source_physical_path.exists()
+        assert (get_settings().storage_root_path / moved_source_path.storage_path).is_dir()
+        assert (get_settings().storage_root_path / child_path.storage_path).is_dir()
 
 
 def test_path_can_be_renamed_and_hidden_with_descendants(
@@ -227,3 +259,26 @@ def test_path_delete_removes_subtree_files_and_frees_name(
         deleted_file = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
         assert deleted_parent.status == "deleted"
         assert deleted_file.status == "deleted"
+
+
+def test_startup_fails_when_storage_root_is_missing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """启动时存储根路径缺失会阻断，避免静默创建新的 SQLite。"""
+
+    storage_root = tmp_path / "missing-storage"
+    db_path = tmp_path / "pfmt.sqlite3"
+    monkeypatch.setenv("PFMT_STORAGE_ROOT", storage_root.as_posix())
+    monkeypatch.setenv("PFMT_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("PFMT_JWT_SECRET_KEY", "test-jwt-secret-with-at-least-32-bytes")
+    monkeypatch.setenv("PFMT_FILE_MASTER_KEY", "test-file-master-key")
+    get_settings.cache_clear()
+    reset_database_state()
+
+    try:
+        app = create_app()
+        with pytest.raises(RuntimeError):
+            with TestClient(app):
+                pass
+        assert not db_path.exists()
+    finally:
+        reset_database_state()
+        get_settings.cache_clear()

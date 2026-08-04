@@ -1,4 +1,5 @@
 import base64
+import hmac
 import hashlib
 import os
 import struct
@@ -16,6 +17,7 @@ MAGIC = b"PFMTENC1"
 HEADER = struct.Struct(">8sBI")
 FRAME_HEADER = struct.Struct(">Q12sI")
 KEY_WRAP_VERSION = "aesgcm-chunked-v1"
+STORAGE_NAME_VERSION = "v1"
 
 
 def load_master_key(settings: Settings) -> bytes:
@@ -45,6 +47,23 @@ def derive_file_key(master_key: bytes, file_id: str) -> bytes:
         info=b"pfmt-file-content-v1",
     )
     return hkdf.derive(master_key)
+
+
+def generate_storage_name(settings: Settings, *, kind: str, object_id: str) -> str:
+    """生成固定短度的本地存储名，避免明文名或长密文撑爆 Windows 路径。"""
+
+    if kind not in {"directory", "file"}:
+        raise ValueError("不支持的存储名称类型")
+
+    prefix = "d1" if kind == "directory" else "f1"
+    digest = hmac.new(
+        load_master_key(settings),
+        f"{STORAGE_NAME_VERSION}:{kind}:{object_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    token = base64.urlsafe_b64encode(digest[:18]).decode("ascii").rstrip("=")
+    suffix = ".pfmt" if kind == "file" else ""
+    return f"{prefix}_{token}{suffix}"
 
 
 def build_header(chunk_size: int) -> bytes:

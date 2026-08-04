@@ -116,6 +116,18 @@ def _patch_sqlite_schema(engine: Engine) -> None:
                 text("ALTER TABLE user_session ADD COLUMN show_hidden_enabled BOOLEAN NOT NULL DEFAULT 0")
             )
 
+        path_columns = {
+            row[1]
+            for row in connection.execute(text("PRAGMA table_info(file_path)")).all()
+        }
+        if path_columns and "storage_name" not in path_columns:
+            connection.execute(text("ALTER TABLE file_path ADD COLUMN storage_name VARCHAR(64)"))
+        if path_columns and "storage_path" not in path_columns:
+            connection.execute(text("ALTER TABLE file_path ADD COLUMN storage_path TEXT"))
+            connection.execute(text("UPDATE file_path SET storage_path = 'data' WHERE path_id = 'root'"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_file_path_storage_path ON file_path(storage_path)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_path_storage_path ON file_path(storage_path)"))
+
         connection.execute(
             text(
                 """

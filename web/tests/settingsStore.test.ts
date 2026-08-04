@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/stores/settingsStore'
 
 vi.mock('@/api/auth', () => ({
   authApi: {
+    getHiddenContentSession: vi.fn(),
     setHiddenContentSession: vi.fn()
   }
 }))
@@ -21,6 +22,9 @@ vi.mock('@/api/settings', () => ({
 describe('settings store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    vi.mocked(authApi.getHiddenContentSession).mockResolvedValue({
+      show_hidden_enabled: false
+    })
     vi.mocked(authApi.setHiddenContentSession).mockResolvedValue({
       show_hidden_enabled: true
     })
@@ -45,9 +49,10 @@ describe('settings store', () => {
     expect(store.showHiddenContent).toBe(false)
     expect(store.settings.showHiddenDefault).toBe(false)
     expect(store.settings.storageRootPath).toBe('D:/pfmt/storage')
+    expect(authApi.getHiddenContentSession).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps manually enabled hidden content only in the current session', async () => {
+  it('restores manually enabled hidden content from the current session after reload', async () => {
     vi.mocked(settingsApi.getSettings).mockResolvedValue({
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
@@ -61,6 +66,9 @@ describe('settings store', () => {
 
     const store = useSettingsStore()
     await store.setShowHiddenContent(true)
+    vi.mocked(authApi.getHiddenContentSession).mockResolvedValue({
+      show_hidden_enabled: true
+    })
     await store.loadSettings()
 
     expect(store.showHiddenContent).toBe(true)

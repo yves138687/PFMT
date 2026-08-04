@@ -11,6 +11,9 @@ export const authApi = {
   getCurrentUser() {
     return http.get<UserProfile>('/auth/me')
   },
+  getHiddenContentSession() {
+    return http.get<HiddenContentSessionResponse>('/auth/hidden-content')
+  },
   setHiddenContentSession(enabled: boolean) {
     return http.put<HiddenContentSessionResponse>('/auth/hidden-content', { enabled })
   }

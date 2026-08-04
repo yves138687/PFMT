@@ -235,6 +235,9 @@ class FileService:
         file_ext = normalize_extension(original_name)
         mime_type = upload_file.content_type
         file_type = detect_file_type(file_ext, mime_type)
+        if self.repository.get_active_by_name(path_id=parent_path.path_id, original_name=original_name) is not None:
+            self._record_failed_upload(current_user.user_id, client_ip, "duplicate_file_name")
+            raise ConflictError("同名文件已存在")
         should_encrypt = (
             self.setting_service.get_bool("storage.encryption_enabled", True)
             if encryption_enabled is None
@@ -247,6 +250,7 @@ class FileService:
                 upload_file=upload_file,
                 file_id=file_id,
                 encryption_enabled=should_encrypt,
+                parent_storage_path=parent_path.storage_path,
             )
             file_info = FileInfo(
                 file_id=file_id,
@@ -998,6 +1002,16 @@ class FileService:
         remark = self._normalize_optional_text(payload.remark)
         summary_content = self._normalize_optional_text(payload.summary_content)
         original_name = payload.original_name.strip() if payload.original_name is not None else None
+        if (
+            original_name is not None
+            and self.repository.get_active_by_name(
+                path_id=parent_path.path_id,
+                original_name=original_name,
+                exclude_file_id=file_info.file_id,
+            )
+            is not None
+        ):
+            raise ConflictError("同名文件已存在")
         self.repository.update_metadata(
             file_info,
             original_name=original_name,
@@ -1197,7 +1211,7 @@ class FileService:
     ) -> FileDetailResponse:
         """移动文件到新的业务目录，不改变底层存储对象。"""
 
-        file_info, _parent_path = self._get_visible_file_and_path(
+        file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
             show_hidden=show_hidden,
             action_type="move_file",
@@ -1216,10 +1230,41 @@ class FileService:
             )
             raise NotFoundError("目标目录不存在")
 
+        if (
+            target_path.path_id != file_info.path_id
+            and self.repository.get_active_by_name(
+                path_id=target_path.path_id,
+                original_name=file_info.original_name,
+                exclude_file_id=file_info.file_id,
+            )
+            is not None
+        ):
+            self._record_file_action_failure(
+                user_id=current_user.user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type="move_file",
+                reason="duplicate_file_name",
+            )
+            raise ConflictError("目标目录下已存在同名文件")
+
+        original_storage_path = file_info.storage_path
+        new_storage_path = original_storage_path
+        if target_path.path_id != parent_path.path_id:
+            new_storage_path = self.storage_service.move_object(
+                source_storage_path=original_storage_path,
+                target_parent_storage_path=target_path.storage_path,
+                storage_object_name=file_info.storage_object_name,
+            )
         self.repository.move_to_path(
             file_info,
             path_id=target_path.path_id,
             visibility_type="normal",
+            user_id=current_user.user_id,
+        )
+        self.repository.update_storage_path(
+            file_info,
+            storage_path=new_storage_path,
             user_id=current_user.user_id,
         )
         self.audit_service.record(
@@ -1231,7 +1276,17 @@ class FileService:
             detail={"path_id": target_path.path_id},
             client_ip=client_ip,
         )
-        self.db.commit()
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            if new_storage_path != original_storage_path:
+                self.storage_service.move_object(
+                    source_storage_path=new_storage_path,
+                    target_parent_storage_path=parent_path.storage_path,
+                    storage_object_name=file_info.storage_object_name,
+                )
+            raise
         self.db.refresh(file_info)
         self.logger.info(
             "文件移动完成",
@@ -1529,10 +1584,16 @@ class FileService:
     ) -> FileInfo:
         target_file_id = new_business_id("file")
         should_encrypt = self.setting_service.get_bool("storage.encryption_enabled", True)
+        parent_path = self.path_repository.get_active_by_path_id(path_id)
+        if parent_path is None:
+            raise NotFoundError("目录不存在")
+        if self.repository.get_active_by_name(path_id=path_id, original_name=target_name) is not None:
+            raise ConflictError("同名文件已存在")
         stored_object = self.storage_service.save_bytes(
             content=content.encode("utf-8"),
             file_id=target_file_id,
             encryption_enabled=should_encrypt,
+            parent_storage_path=parent_path.storage_path,
         )
         return self.repository.create(
             FileInfo(

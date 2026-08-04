@@ -34,6 +34,24 @@ class FileRepository:
         stmt = stmt.order_by(FileInfo.updated_at.desc(), FileInfo.id.desc())
         return list(self.db.execute(stmt).scalars().all())
 
+    def get_active_by_name(
+        self,
+        *,
+        path_id: str,
+        original_name: str,
+        exclude_file_id: str | None = None,
+    ) -> FileInfo | None:
+        """按目录和展示文件名查询未删除文件，用于保持展示树一一对应。"""
+
+        stmt = select(FileInfo).where(
+            FileInfo.path_id == path_id,
+            FileInfo.original_name == original_name,
+            FileInfo.status == "active",
+        )
+        if exclude_file_id is not None:
+            stmt = stmt.where(FileInfo.file_id != exclude_file_id)
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def list_active_by_file_ids(self, file_ids: Sequence[str]) -> list[FileInfo]:
         """按文件 ID 批量查询未删除文件。"""
 
@@ -129,6 +147,13 @@ class FileRepository:
         file_info.size_bytes = size_bytes
         file_info.checksum_sha256 = checksum_sha256
         file_info.key_wrap_version = key_wrap_version
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
+    def update_storage_path(self, file_info: FileInfo, *, storage_path: str, user_id: str) -> None:
+        """更新文件移动后的真实存储路径。"""
+
+        file_info.storage_path = storage_path
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 

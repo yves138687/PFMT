@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS file_path (
     path_id TEXT NOT NULL,
     parent_path_id TEXT,
     path_name TEXT NOT NULL,
+    storage_name TEXT,
+    storage_path TEXT NOT NULL,
     path_type TEXT NOT NULL DEFAULT 'normal' CHECK (path_type IN ('normal', 'private')),
     path_level INTEGER NOT NULL DEFAULT 0 CHECK (path_level >= 0),
     sort_index INTEGER NOT NULL DEFAULT 0,
@@ -49,6 +51,7 @@ CREATE TABLE IF NOT EXISTS file_path (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (path_id),
     UNIQUE (full_path),
+    UNIQUE (storage_path),
     FOREIGN KEY (parent_path_id) REFERENCES file_path(path_id)
         ON UPDATE CASCADE
         ON DELETE SET NULL
@@ -236,6 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_user_session_expires_at ON user_session(expires_a
 CREATE INDEX IF NOT EXISTS idx_file_path_parent_path_id ON file_path(parent_path_id);
 CREATE INDEX IF NOT EXISTS idx_file_path_hidden_status ON file_path(is_hidden, status);
 CREATE INDEX IF NOT EXISTS idx_file_path_type_status ON file_path(path_type, status);
+CREATE INDEX IF NOT EXISTS idx_file_path_storage_path ON file_path(storage_path);
 
 CREATE INDEX IF NOT EXISTS idx_file_info_path_id ON file_info(path_id);
 CREATE INDEX IF NOT EXISTS idx_file_info_type_status ON file_info(file_type, status);

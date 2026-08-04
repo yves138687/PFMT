@@ -1,13 +1,14 @@
 import hashlib
+import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import UploadFile
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.config import Settings
+from app.core.exceptions import ConflictError
 from app.models.file import FileInfo
 from app.utils.crypto import (
     FRAME_HEADER,
@@ -16,9 +17,14 @@ from app.utils.crypto import (
     build_header,
     derive_file_key,
     encrypt_chunk,
+    generate_storage_name,
     iter_decrypted_chunks,
     load_master_key,
 )
+
+STORAGE_DATA_ROOT = "data"
+WINDOWS_MAX_COMPONENT_CHARS = 120
+WINDOWS_SAFE_MAX_PATH_CHARS = 240
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,14 @@ class StoredObject:
     size_bytes: int
     checksum_sha256: str
     key_wrap_version: str | None
+
+
+@dataclass(frozen=True)
+class StoredPath:
+    """目录写入存储层后的相对路径信息。"""
+
+    storage_name: str
+    storage_path: str
 
 
 @dataclass(frozen=True)
@@ -56,20 +70,69 @@ class StorageService:
         self.settings = settings
         self.storage_root = settings.storage_root_path
 
+    def ensure_storage_root_available(self) -> None:
+        """启动前确认用户配置的存储根路径存在，避免静默创建空库。"""
+
+        if not self.storage_root.exists() or not self.storage_root.is_dir():
+            raise RuntimeError(f"文件存储根路径不存在或不是目录: {self.storage_root}")
+
+    def ensure_data_root(self) -> None:
+        """确保存储根路径下的数据树入口存在。"""
+
+        self._validate_absolute_path(self.storage_root / STORAGE_DATA_ROOT)
+        (self.storage_root / STORAGE_DATA_ROOT).mkdir(parents=True, exist_ok=True)
+
+    def root_storage_path(self) -> str:
+        return STORAGE_DATA_ROOT
+
+    def build_directory_path(self, *, parent_storage_path: str, path_id: str) -> StoredPath:
+        """基于父目录真实路径和 path_id 生成固定短度的子目录存储路径。"""
+
+        storage_name = generate_storage_name(self.settings, kind="directory", object_id=path_id)
+        relative_path = Path(parent_storage_path) / storage_name
+        self._validate_relative_path(relative_path)
+        self._validate_absolute_path(self.storage_root / relative_path)
+        return StoredPath(storage_name=storage_name, storage_path=relative_path.as_posix())
+
+    def create_directory(self, storage_path: str) -> None:
+        """创建真实目录，并校验路径长度位于 Windows 安全范围内。"""
+
+        directory_path = self._absolute_storage_path(storage_path)
+        self._validate_absolute_path(directory_path)
+        directory_path.mkdir(parents=True, exist_ok=False)
+
+    def move_storage_tree(self, *, source_storage_path: str, target_storage_path: str) -> None:
+        """移动真实目录树，目录移动时同步物理层级。"""
+
+        source_path = self._absolute_storage_path(source_storage_path)
+        target_path = self._absolute_storage_path(target_storage_path)
+        self._validate_absolute_path(target_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.replace(target_path)
+
+    def delete_directory_tree(self, storage_path: str) -> None:
+        """删除已经确认在存储根目录内的真实目录树。"""
+
+        directory_path = self._absolute_storage_path(storage_path)
+        if directory_path.exists():
+            shutil.rmtree(directory_path)
+
     async def save_upload_file(
         self,
         *,
         upload_file: UploadFile,
         file_id: str,
         encryption_enabled: bool,
+        parent_storage_path: str,
     ) -> StoredObject:
         """流式读取 UploadFile 并写入随机对象名文件。"""
 
         chunk_size = max(64 * 1024, self.settings.upload_chunk_size)
-        object_name = f"{uuid4().hex}.pfmt"
-        shard = object_name[:2]
-        relative_path = Path("objects") / shard / object_name
+        object_name = generate_storage_name(self.settings, kind="file", object_id=file_id)
+        relative_path = Path(parent_storage_path) / object_name
+        self._validate_relative_path(relative_path)
         final_path = self.storage_root / relative_path
+        self._validate_absolute_path(final_path)
         temp_path = final_path.with_suffix(final_path.suffix + ".tmp")
         final_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -117,13 +180,15 @@ class StorageService:
         content: bytes,
         file_id: str,
         encryption_enabled: bool,
+        parent_storage_path: str,
     ) -> StoredObject:
         """将服务内部生成的内容写入新的随机存储对象。"""
 
-        object_name = f"{uuid4().hex}.pfmt"
-        shard = object_name[:2]
-        relative_path = Path("objects") / shard / object_name
+        object_name = generate_storage_name(self.settings, kind="file", object_id=file_id)
+        relative_path = Path(parent_storage_path) / object_name
+        self._validate_relative_path(relative_path)
         final_path = self.storage_root / relative_path
+        self._validate_absolute_path(final_path)
         self._write_bytes_to_path(
             content=content,
             file_id=file_id,
@@ -271,10 +336,39 @@ class StorageService:
 
         self._absolute_object_path(storage_path).unlink(missing_ok=True)
 
+    def move_object(self, *, source_storage_path: str, target_parent_storage_path: str, storage_object_name: str) -> str:
+        """移动文件对象到新的真实目录，保留短存储文件名。"""
+
+        target_relative_path = Path(target_parent_storage_path) / storage_object_name
+        self._validate_relative_path(target_relative_path)
+        source_path = self._absolute_object_path(source_storage_path)
+        target_path = self.storage_root / target_relative_path
+        self._validate_absolute_path(target_path)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        source_path.replace(target_path)
+        return target_relative_path.as_posix()
+
     def _absolute_object_path(self, storage_path: str) -> Path:
         """把数据库里的相对对象路径限制在 storage_root 下。"""
 
+        return self._absolute_storage_path(storage_path)
+
+    def _absolute_storage_path(self, storage_path: str) -> Path:
+        """把数据库里的相对存储路径限制在 storage_root 下。"""
+
         relative_path = Path(storage_path)
+        self._validate_relative_path(relative_path)
+        return self.storage_root / relative_path
+
+    @staticmethod
+    def _validate_relative_path(relative_path: Path) -> None:
         if relative_path.is_absolute() or ".." in relative_path.parts:
             raise ValueError("非法存储对象路径")
-        return self.storage_root / relative_path
+        for part in relative_path.parts:
+            if len(part) > WINDOWS_MAX_COMPONENT_CHARS:
+                raise ConflictError("生成的存储名称超过 Windows 文件名长度限制")
+
+    @staticmethod
+    def _validate_absolute_path(path: Path) -> None:
+        if len(str(path)) > WINDOWS_SAFE_MAX_PATH_CHARS:
+            raise ConflictError("生成的存储路径超过 Windows 安全长度限制")

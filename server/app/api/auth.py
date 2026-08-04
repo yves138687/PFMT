@@ -37,6 +37,14 @@ def me(current_user: UserAccount = Depends(get_current_user)) -> UserProfile:
     return AuthService._to_profile(current_user)
 
 
+@router.get("/hidden-content", response_model=HiddenContentSessionResponse)
+def get_hidden_content_session(current_user: UserAccount = Depends(get_current_user)) -> HiddenContentSessionResponse:
+    """读取当前登录会话的隐藏内容显示状态。"""
+
+    enabled = bool(getattr(current_user, "_pfmt_show_hidden_enabled", False))
+    return HiddenContentSessionResponse(show_hidden_enabled=enabled)
+
+
 @router.put("/hidden-content", response_model=HiddenContentSessionResponse)
 def set_hidden_content_session(
     payload: HiddenContentSessionRequest,

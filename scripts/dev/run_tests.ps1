@@ -73,13 +73,22 @@ if (-not $SkipWeb) {
     $packageJson = Join-Path $webDir 'package.json'
 
     if (Test-Path -LiteralPath $packageJson) {
-        if ($null -eq (Get-Command pnpm -ErrorAction SilentlyContinue)) {
-            Write-PfmtWarn '未找到 pnpm，已跳过前端测试。'
+        if ($null -eq (Get-Command npm -ErrorAction SilentlyContinue)) {
+            Write-PfmtWarn '未找到 npm，已跳过前端测试。'
         }
         else {
             if (-not $SkipInstall) {
-                Invoke-PfmtTestStep -Name '前端依赖安装' -Action {
-                    Invoke-PfmtNative -Command 'pnpm' -Arguments @('install') -WorkingDirectory $webDir
+                $vitestCommand = Join-Path $webDir 'node_modules\.bin\vitest.cmd'
+                if (Test-Path -LiteralPath $vitestCommand) {
+                    Write-PfmtOk '已检测到前端测试依赖，跳过 npm install。'
+                }
+                else {
+                    Invoke-PfmtTestStep -Name '前端依赖安装' -Action {
+                        if (Test-Path -LiteralPath (Join-Path $webDir 'node_modules\.pnpm')) {
+                            throw "检测到 pnpm 结构的 web\node_modules，但未找到 Vitest。请清理 web\node_modules 后再用 npm 重新安装。"
+                        }
+                        Invoke-PfmtNative -Command 'npm' -Arguments @('install') -WorkingDirectory $webDir
+                    }
                 }
             }
 
@@ -91,12 +100,12 @@ if (-not $SkipWeb) {
 
             if ($scriptNames -contains 'test') {
                 Invoke-PfmtTestStep -Name '前端 test 脚本' -Action {
-                    Invoke-PfmtNative -Command 'pnpm' -Arguments @('test') -WorkingDirectory $webDir
+                    Invoke-PfmtNative -Command 'npm' -Arguments @('test') -WorkingDirectory $webDir
                 }
             }
             elseif ($scriptNames -contains 'test:unit') {
                 Invoke-PfmtTestStep -Name '前端 test:unit 脚本' -Action {
-                    Invoke-PfmtNative -Command 'pnpm' -Arguments @('test:unit') -WorkingDirectory $webDir
+                    Invoke-PfmtNative -Command 'npm' -Arguments @('run', 'test:unit') -WorkingDirectory $webDir
                 }
             }
             else {
@@ -106,7 +115,7 @@ if (-not $SkipWeb) {
             if ($IncludeE2E) {
                 if ($scriptNames -contains 'test:e2e') {
                     Invoke-PfmtTestStep -Name '前端端到端测试' -Action {
-                        Invoke-PfmtNative -Command 'pnpm' -Arguments @('test:e2e') -WorkingDirectory $webDir
+                        Invoke-PfmtNative -Command 'npm' -Arguments @('run', 'test:e2e') -WorkingDirectory $webDir
                     }
                 }
                 else {
