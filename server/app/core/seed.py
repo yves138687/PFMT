@@ -56,7 +56,10 @@ def _seed_root_path(db: Session) -> None:
     """不存在根目录时创建 root 节点。"""
 
     repository = PathRepository(db)
-    if repository.get_by_path_id("root") is not None:
+    root = repository.get_by_path_id("root")
+    if root is not None:
+        root.storage_name = None
+        root.storage_path = "data"
         return
 
     repository.create(
@@ -64,6 +67,8 @@ def _seed_root_path(db: Session) -> None:
             path_id="root",
             parent_path_id=None,
             path_name="根目录",
+            storage_name=None,
+            storage_path="data",
             path_type="normal",
             path_level=0,
             sort_index=0,

@@ -63,6 +63,10 @@ function submitSearch() {
   })
 }
 
+function handleShowHiddenChange(value: string | number | boolean) {
+  void settingsStore.setShowHiddenContent(Boolean(value))
+}
+
 function openUploadDialog() {
   const pathId = route.name === 'folder' && typeof route.params.pathId === 'string' ? route.params.pathId : 'root'
   void router.push({
@@ -125,8 +129,18 @@ watch(
         <el-switch
           :model-value="settingsStore.showHiddenContent"
           aria-label="显示隐藏内容"
-          @change="(value: string | number | boolean) => void settingsStore.setShowHiddenContent(Boolean(value))"
+          @change="handleShowHiddenChange"
         />
+      </div>
+
+      <div v-if="settingsStore.hiddenFeatureEnabled" class="top-nav__mobile-hidden-switch">
+        <el-tooltip content="显示隐藏内容" placement="bottom">
+          <el-switch
+            :model-value="settingsStore.showHiddenContent"
+            aria-label="显示隐藏内容"
+            @change="handleShowHiddenChange"
+          />
+        </el-tooltip>
       </div>
 
       <el-tooltip content="上传文件" placement="bottom">
@@ -217,6 +231,11 @@ watch(
   white-space: nowrap;
 }
 
+.top-nav__mobile-hidden-switch {
+  display: none;
+  align-items: center;
+}
+
 .top-nav__user {
   display: inline-flex;
   align-items: center;
@@ -248,9 +267,32 @@ watch(
 }
 
 @media (max-width: 920px) {
+  .top-nav {
+    padding: 0 12px;
+  }
+
+  .top-nav__left,
+  .top-nav__right {
+    gap: 8px;
+  }
+
   .top-nav__breadcrumb,
   .top-nav__search,
   .top-nav__hidden-switch {
+    display: none;
+  }
+
+  .top-nav__mobile-hidden-switch {
+    display: inline-flex;
+  }
+
+  .top-nav__user strong {
+    display: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .top-nav__brand > span:not(.top-nav__mark) {
     display: none;
   }
 }

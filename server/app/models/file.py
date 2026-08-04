@@ -26,9 +26,11 @@ class FilePath(Base):
         CheckConstraint("path_level >= 0", name="ck_file_path_level"),
         CheckConstraint("status IN ('active', 'deleted')", name="ck_file_path_status"),
         UniqueConstraint("full_path", name="uq_file_path_full_path"),
+        UniqueConstraint("storage_path", name="uq_file_path_storage_path"),
         Index("idx_file_path_parent_path_id", "parent_path_id"),
         Index("idx_file_path_hidden_status", "is_hidden", "status"),
         Index("idx_file_path_type_status", "path_type", "status"),
+        Index("idx_file_path_storage_path", "storage_path"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -37,6 +39,8 @@ class FilePath(Base):
         String(64), ForeignKey("file_path.path_id", onupdate="CASCADE", ondelete="SET NULL")
     )
     path_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_name: Mapped[str | None] = mapped_column(String(64))
+    storage_path: Mapped[str] = mapped_column(Text, nullable=False)
     path_type: Mapped[str] = mapped_column(String(32), nullable=False, default="normal")
     path_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sort_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

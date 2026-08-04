@@ -11,22 +11,25 @@ from app.core.config import get_settings
 from app.core.database import get_engine
 from app.models.audit import AuditLog
 from app.models.file import FileInfo, FileTag, FileTagRel
+from app.services.storage_integrity_service import StorageIntegrityService
+from app.services.storage_service import WINDOWS_MAX_COMPONENT_CHARS, WINDOWS_SAFE_MAX_PATH_CHARS
 
 
 def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers: dict[str, str]) -> None:
     """上传文件必须使用随机 storage_object_name，但响应不暴露底层对象名。"""
 
     payload = b"# Title\nsecret body\n"
+    original_name = f"{'long-name-' * 18}.md"
     response = client.post(
         "/api/files/upload",
         headers=auth_headers,
         data={"path_id": "root"},
-        files={"file": ("notes.md", payload, "text/markdown")},
+        files={"file": (original_name, payload, "text/markdown")},
     )
 
     assert response.status_code == 201
     body = response.json()
-    assert body["original_name"] == "notes.md"
+    assert body["original_name"] == original_name
     assert "storage_object_name" not in body
     assert "visibility_type" not in body
     assert body["encryption_enabled"] is True
@@ -35,9 +38,12 @@ def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers
         file_info = db.execute(
             select(FileInfo).where(FileInfo.file_id == body["file_id"])
         ).scalar_one()
-        assert file_info.storage_object_name != "notes.md"
-        assert "notes" not in file_info.storage_object_name.lower()
+        assert file_info.storage_object_name != original_name
+        assert "long-name" not in file_info.storage_object_name.lower()
+        assert file_info.storage_path.startswith("data/")
+        assert len(Path(file_info.storage_path).name) <= WINDOWS_MAX_COMPONENT_CHARS
         object_path = get_settings().storage_root_path / Path(file_info.storage_path)
+        assert len(str(object_path)) <= WINDOWS_SAFE_MAX_PATH_CHARS
         stored_bytes = object_path.read_bytes()
         assert payload not in stored_bytes
 
@@ -450,11 +456,16 @@ def test_file_can_be_moved_and_deleted(
         params={"path_id": target_path_id},
     ).json()
     assert [item["file_id"] for item in moved_files] == [file_id]
+    with Session(get_engine()) as db:
+        moved_file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
+        moved_object_path = get_settings().storage_root_path / Path(moved_file_info.storage_path)
+        assert moved_object_path.exists()
+        assert not object_path.exists()
 
     delete_response = client.delete(f"/api/files/{file_id}", headers=auth_headers)
     assert delete_response.status_code == 204
     assert client.get(f"/api/files/{file_id}", headers=auth_headers).status_code == 404
-    assert not object_path.exists()
+    assert not moved_object_path.exists()
 
     with Session(get_engine()) as db:
         file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
@@ -465,6 +476,32 @@ def test_file_can_be_moved_and_deleted(
             AuditLog.target_id == file_id,
         )
         assert db.execute(stmt).scalar_one_or_none() is not None
+
+
+def test_storage_inventory_warns_when_active_file_is_missing(
+    client: TestClient,
+    auth_headers: dict[str, str],
+    caplog,
+) -> None:
+    """SQLite 清单内个别文件缺失只记录告警，不阻断校验。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("missing.md", b"# Missing\n", "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+    with Session(get_engine()) as db:
+        file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
+        object_path = get_settings().storage_root_path / Path(file_info.storage_path)
+    object_path.unlink()
+
+    caplog.set_level("WARNING", logger="pfmt.storage")
+    StorageIntegrityService(get_settings()).verify_inventory()
+
+    assert "SQLite 清单中的文件缺失真实存储对象" in caplog.text
 
 
 def test_hidden_file_detail_and_markdown_respect_visibility_flag(

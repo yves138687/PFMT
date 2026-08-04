@@ -54,6 +54,13 @@ def test_login_rate_limit_locks_repeated_failures(client: TestClient) -> None:
 def test_hidden_content_session_switch_requires_auth(client: TestClient, auth_headers: dict[str, str]) -> None:
     """显示隐藏内容必须写入当前登录会话，不能未登录打开。"""
 
+    unauthorized_read = client.get("/api/auth/hidden-content")
+    assert unauthorized_read.status_code == 401
+
+    initial = client.get("/api/auth/hidden-content", headers=auth_headers)
+    assert initial.status_code == 200
+    assert initial.json()["show_hidden_enabled"] is False
+
     unauthorized = client.put("/api/auth/hidden-content", json={"enabled": True})
     assert unauthorized.status_code == 401
 
@@ -64,3 +71,7 @@ def test_hidden_content_session_switch_requires_auth(client: TestClient, auth_he
     )
     assert response.status_code == 200
     assert response.json()["show_hidden_enabled"] is True
+
+    persisted = client.get("/api/auth/hidden-content", headers=auth_headers)
+    assert persisted.status_code == 200
+    assert persisted.json()["show_hidden_enabled"] is True

@@ -31,12 +31,13 @@ export const useSettingsStore = defineStore('settings', {
     async loadSettings() {
       this.loading = true
       try {
-        const settings = await settingsApi.getSettings()
+        const [settings, hiddenSession] = await Promise.all([
+          settingsApi.getSettings(),
+          authApi.getHiddenContentSession()
+        ])
         this.settings = cloneSettings({ ...settings, showHiddenDefault: false })
         this.initialized = true
-        if (!this.settings.hiddenFeatureEnabled) {
-          this.showHiddenContent = false
-        }
+        this.showHiddenContent = this.settings.hiddenFeatureEnabled && hiddenSession.show_hidden_enabled
       } finally {
         this.loading = false
       }

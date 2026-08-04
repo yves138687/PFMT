@@ -81,10 +81,18 @@ class PathService:
             self.db.commit()
             raise ConflictError("同名目录已存在")
 
+        path_id = new_business_id("path")
+        stored_path = self.storage_service.build_directory_path(
+            parent_storage_path=parent.storage_path,
+            path_id=path_id,
+        )
+        self.storage_service.create_directory(stored_path.storage_path)
         path = FilePath(
-            path_id=new_business_id("path"),
+            path_id=path_id,
             parent_path_id=parent.path_id,
             path_name=payload.path_name,
+            storage_name=stored_path.storage_name,
+            storage_path=stored_path.storage_path,
             path_type="normal",
             path_level=parent.path_level + 1,
             sort_index=self.repository.next_sort_index(parent.path_id),
@@ -106,7 +114,12 @@ class PathService:
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
+            self.storage_service.delete_directory_tree(stored_path.storage_path)
             raise ConflictError("目录创建冲突") from exc
+        except Exception:
+            self.db.rollback()
+            self.storage_service.delete_directory_tree(stored_path.storage_path)
+            raise
         self.db.refresh(path)
         return self._to_read(path)
 
@@ -167,10 +180,18 @@ class PathService:
 
         old_full_path = path.full_path
         new_full_path = self._join_full_path(parent.full_path, path.path_name)
+        old_storage_path = path.storage_path
+        new_storage_path = self._join_storage_path(parent.storage_path, path.storage_name)
         new_full_paths = {
             item.path_id: new_full_path
             if item.path_id == path.path_id
             else f"{new_full_path}{item.full_path.removeprefix(old_full_path)}"
+            for item in subtree
+        }
+        new_storage_paths = {
+            item.path_id: new_storage_path
+            if item.path_id == path.path_id
+            else f"{new_storage_path}{item.storage_path.removeprefix(old_storage_path)}"
             for item in subtree
         }
         active_paths = [
@@ -189,10 +210,15 @@ class PathService:
 
         updated_at = now_utc()
         level_delta = parent.path_level + 1 - path.path_level
+        self.storage_service.move_storage_tree(
+            source_storage_path=old_storage_path,
+            target_storage_path=new_storage_path,
+        )
         path.parent_path_id = parent.path_id
         path.sort_index = self.repository.next_sort_index(parent.path_id)
         for item in subtree:
             item.full_path = new_full_paths[item.path_id]
+            item.storage_path = new_storage_paths[item.path_id]
             item.path_level += level_delta
             item.updated_at = updated_at
 
@@ -209,7 +235,18 @@ class PathService:
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
+            self.storage_service.move_storage_tree(
+                source_storage_path=new_storage_path,
+                target_storage_path=old_storage_path,
+            )
             raise ConflictError("目录移动冲突") from exc
+        except Exception:
+            self.db.rollback()
+            self.storage_service.move_storage_tree(
+                source_storage_path=new_storage_path,
+                target_storage_path=old_storage_path,
+            )
+            raise
         self.db.refresh(path)
         return self._to_read(path)
 
@@ -352,6 +389,7 @@ class PathService:
 
         for file_info in files:
             self.storage_service.delete_object(file_info.storage_path)
+        self.storage_service.delete_directory_tree(path.storage_path)
 
     def _include_hidden(self, *, current_user: UserAccount | None) -> bool:
         """依据隐藏功能开关和当前会话状态决定是否返回隐藏目录。"""
@@ -367,6 +405,14 @@ class PathService:
         if parent_full_path == "/":
             return f"/{path_name}"
         return f"{parent_full_path.rstrip('/')}/{path_name}"
+
+    @staticmethod
+    def _join_storage_path(parent_storage_path: str, storage_name: str | None) -> str:
+        """拼出数据库冗余的真实相对存储路径。"""
+
+        if not storage_name:
+            raise ConflictError("目录缺少真实存储名称")
+        return f"{parent_storage_path.rstrip('/')}/{storage_name}"
 
     def _active_subtree(self, path_id: str) -> list[FilePath]:
         """按父子关系取出一个目录的未删除子树。"""
