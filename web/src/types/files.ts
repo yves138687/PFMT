@@ -73,6 +73,7 @@ export interface UploadFilePayload {
   pathId: string
   relativePath?: string
   encryptionEnabled: boolean
+  conflictStrategy?: 'rename' | 'overwrite'
 }
 
 export interface MarkdownFileContent {

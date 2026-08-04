@@ -1,9 +1,11 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 
 DocumentFormat = str
+FileConflictStrategy = Literal["rename", "overwrite"]
 
 
 class FileTagItem(BaseModel):

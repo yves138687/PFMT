@@ -12,6 +12,41 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 describe('filesApi', () => {
+  it('uploads files with a conflict strategy', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          file_id: 'file_1',
+          path_id: 'root',
+          original_name: 'note(1).txt',
+          file_type: 'text',
+          size_bytes: 5,
+          encryption_enabled: true,
+          is_hidden: false,
+          status: 'active',
+          created_at: '2026-07-24T00:00:00',
+          updated_at: '2026-07-24T00:00:00'
+        },
+        201
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.uploadFile({
+      file: new File(['hello'], 'note.txt', { type: 'text/plain' }),
+      pathId: 'root',
+      encryptionEnabled: true,
+      conflictStrategy: 'rename'
+    })
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    const body = init.body as FormData
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/upload')
+    expect(init.method).toBe('POST')
+    expect(body.get('path_id')).toBe('root')
+    expect(body.get('conflict_strategy')).toBe('rename')
+  })
+
   it('reads file detail without visibility query', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

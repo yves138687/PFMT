@@ -78,6 +78,64 @@ def test_uploaded_markdown_can_be_read_after_decryption(
         assert db.execute(stmt).scalar_one_or_none() is not None
 
 
+def test_upload_duplicate_name_auto_renames_by_default(client: TestClient, auth_headers: dict[str, str]) -> None:
+    """同目录上传同名文件默认自动追加序号，不返回冲突。"""
+
+    first = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("same.txt", b"first", "text/plain")},
+    )
+    second = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("same.txt", b"second", "text/plain")},
+    )
+
+    assert first.status_code == 201
+    assert second.status_code == 201
+    assert first.json()["original_name"] == "same.txt"
+    assert second.json()["original_name"] == "same(1).txt"
+    assert first.json()["file_id"] != second.json()["file_id"]
+
+    export_response = client.get(f"/api/files/{second.json()['file_id']}/export", headers=auth_headers)
+    assert export_response.status_code == 200
+    assert export_response.content == b"second"
+
+
+def test_upload_duplicate_name_can_overwrite_existing_file(client: TestClient, auth_headers: dict[str, str]) -> None:
+    """用户选择覆盖时，复用同名文件记录并替换文件内容。"""
+
+    first = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("same.txt", b"first", "text/plain")},
+    )
+    overwrite = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "conflict_strategy": "overwrite"},
+        files={"file": ("same.txt", b"second", "text/plain")},
+    )
+
+    assert first.status_code == 201
+    assert overwrite.status_code == 201
+    assert overwrite.json()["file_id"] == first.json()["file_id"]
+    assert overwrite.json()["original_name"] == "same.txt"
+    assert overwrite.json()["size_bytes"] == len(b"second")
+
+    files_response = client.get("/api/files", headers=auth_headers, params={"path_id": "root"})
+    assert files_response.status_code == 200
+    assert [item["original_name"] for item in files_response.json()] == ["same.txt"]
+
+    export_response = client.get(f"/api/files/{first.json()['file_id']}/export", headers=auth_headers)
+    assert export_response.status_code == 200
+    assert export_response.content == b"second"
+
+
 def test_uploaded_file_is_visible_in_folder_list(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
@@ -367,9 +425,9 @@ def test_batch_export_multiple_files_returns_zip_with_unique_names(
     assert export_response.headers["content-type"].startswith("application/zip")
     assert export_response.headers["content-disposition"].endswith(".zip")
     with zipfile.ZipFile(BytesIO(export_response.content)) as archive:
-        assert archive.namelist() == ["same.txt", "same (1).txt"]
+        assert archive.namelist() == ["same.txt", "same(1).txt"]
         assert archive.read("same.txt") == b"first"
-        assert archive.read("same (1).txt") == b"second"
+        assert archive.read("same(1).txt") == b"second"
 
 
 def test_export_respects_hidden_visibility_flag(
@@ -615,6 +673,45 @@ def test_file_can_be_moved_and_deleted(
         assert db.execute(stmt).scalar_one_or_none() is not None
 
 
+def test_move_file_duplicate_name_auto_renames(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """移动到已有同名文件的目录时自动改名。"""
+
+    path_response = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Archive", "parent_path_id": "root"},
+    )
+    assert path_response.status_code == 201
+    target_path_id = path_response.json()["path_id"]
+
+    existing = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": target_path_id},
+        files={"file": ("same.md", b"# Existing\n", "text/markdown")},
+    )
+    moving = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("same.md", b"# Moving\n", "text/markdown")},
+    )
+    assert existing.status_code == 201
+    assert moving.status_code == 201
+
+    move_response = client.patch(
+        f"/api/files/{moving.json()['file_id']}/move",
+        headers=auth_headers,
+        json={"path_id": target_path_id},
+    )
+
+    assert move_response.status_code == 200
+    assert move_response.json()["original_name"] == "same(1).md"
+    assert move_response.json()["logical_path"] == "/Archive/same(1).md"
+
+
 def test_storage_inventory_warns_when_active_file_is_missing(
     client: TestClient,
     auth_headers: dict[str, str],
@@ -805,6 +902,18 @@ def test_create_document_uses_encrypted_generated_file_pipeline(
             object_path = get_settings().storage_root_path / Path(file_info.storage_path)
             assert object_path.exists()
             assert object_path.stat().st_size > 0
+
+    duplicate_response = client.post(
+        "/api/files/document",
+        headers=auth_headers,
+        json={
+            "path_id": "root",
+            "original_name": "scratch",
+            "document_format": "plain_text",
+        },
+    )
+    assert duplicate_response.status_code == 201
+    assert duplicate_response.json()["original_name"] == "scratch(1).txt"
 
 
 def test_create_hidden_document_respects_session_visibility(

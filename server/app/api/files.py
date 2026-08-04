@@ -14,6 +14,7 @@ from app.schemas.file import (
     DocumentMergeRequest,
     DocumentReadResponse,
     DocumentSaveRequest,
+    FileConflictStrategy,
     FileDetailResponse,
     FileExportRequest,
     FileListItem,
@@ -444,6 +445,7 @@ async def upload_file(
     path_id: str = Form(default="root"),
     encryption_enabled: bool | None = Form(default=None),
     is_hidden: bool = Form(default=False),
+    conflict_strategy: FileConflictStrategy = Form(default="rename"),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -458,6 +460,7 @@ async def upload_file(
         client_ip=client_ip,
         encryption_enabled=encryption_enabled,
         is_hidden=is_hidden,
+        conflict_strategy=conflict_strategy,
     )
 
 

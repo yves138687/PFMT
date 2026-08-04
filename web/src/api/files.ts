@@ -37,6 +37,7 @@ export const filesApi = {
     formData.append('file', payload.file)
     formData.append('path_id', payload.pathId)
     formData.append('encryption_enabled', String(payload.encryptionEnabled))
+    formData.append('conflict_strategy', payload.conflictStrategy ?? 'rename')
 
     if (payload.relativePath) {
       formData.append('relative_path', payload.relativePath)

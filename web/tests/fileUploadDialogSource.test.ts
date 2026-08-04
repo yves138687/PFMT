@@ -26,6 +26,13 @@ describe('FileUploadDialog source contract', () => {
     expect(source).not.toContain('<el-select')
   })
 
+  it('lets users choose how duplicate upload names are handled', () => {
+    expect(source).toContain('conflictStrategy')
+    expect(source).toContain('重名文件：')
+    expect(source).toContain('自动重命名')
+    expect(source).toContain('覆盖已有文件')
+  })
+
   it('uses a mobile-compatible file chooser and queue layout', () => {
     expect(source).toContain(':close-on-click-modal="false"')
     expect(source).toContain('width="min(760px, calc(100vw - 24px))"')
@@ -53,6 +60,8 @@ describe('FileUploadDialog source contract', () => {
           'el-dialog': dialogStub,
           'el-empty': { template: '<div>上传队列为空</div>' },
           'el-icon': { template: '<span><slot /></span>' },
+          'el-radio-button': { template: '<button><slot /></button>' },
+          'el-radio-group': { template: '<div><slot /></div>' },
           'el-table': { template: '<div><slot /></div>' },
           'el-table-column': { template: '<div />' },
           'el-tag': { template: '<span><slot /></span>' }

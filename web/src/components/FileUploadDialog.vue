@@ -33,6 +33,7 @@ const directoryInputRef = ref<HTMLInputElement>()
 const selectedFiles = ref<SelectedUploadFile[]>([])
 const uploading = ref(false)
 const dragActive = ref(false)
+const conflictStrategy = ref<'rename' | 'overwrite'>('rename')
 let uploadUidSeed = 0
 
 const visible = computed({
@@ -145,7 +146,8 @@ async function uploadAll() {
           file: item.file,
           pathId: props.targetPathId,
           relativePath: item.relativePath,
-          encryptionEnabled: settingsStore.encryptionEnabled
+          encryptionEnabled: settingsStore.encryptionEnabled,
+          conflictStrategy: conflictStrategy.value
         })
         item.status = 'success'
       } catch {
@@ -185,6 +187,14 @@ watch(
     <div class="file-upload-dialog__meta">
       <span>上传到：{{ targetFullPath }}</span>
       <el-tag :type="settingsStore.encryptionEnabled ? 'success' : 'warning'">{{ encryptionText }}</el-tag>
+    </div>
+
+    <div class="file-upload-dialog__conflict">
+      <span>重名文件：</span>
+      <el-radio-group v-model="conflictStrategy" :disabled="uploading" size="small">
+        <el-radio-button label="rename">自动重命名</el-radio-button>
+        <el-radio-button label="overwrite">覆盖已有文件</el-radio-button>
+      </el-radio-group>
     </div>
 
     <section
@@ -310,6 +320,15 @@ watch(
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 14px;
+  color: var(--pfmt-text-muted);
+}
+
+.file-upload-dialog__conflict {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
   margin-bottom: 14px;
   color: var(--pfmt-text-muted);
 }
@@ -477,6 +496,11 @@ watch(
   }
 
   .file-upload-dialog__meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .file-upload-dialog__conflict {
     align-items: flex-start;
     flex-direction: column;
   }

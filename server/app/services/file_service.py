@@ -29,6 +29,7 @@ from app.schemas.file import (
     DocumentMergeRequest,
     DocumentReadResponse,
     DocumentSaveRequest,
+    FileConflictStrategy,
     FileDetailResponse,
     FileExportRequest,
     FileListItem,
@@ -222,6 +223,7 @@ class FileService:
         client_ip: str | None,
         encryption_enabled: bool | None,
         is_hidden: bool,
+        conflict_strategy: FileConflictStrategy = "rename",
     ) -> FileUploadResponse:
         """上传文件：先流式落盘，再在同一事务内写元数据和审计。"""
 
@@ -235,14 +237,68 @@ class FileService:
         file_ext = normalize_extension(original_name)
         mime_type = upload_file.content_type
         file_type = detect_file_type(file_ext, mime_type)
-        if self.repository.get_active_by_name(path_id=parent_path.path_id, original_name=original_name) is not None:
-            self._record_failed_upload(current_user.user_id, client_ip, "duplicate_file_name")
-            raise ConflictError("同名文件已存在")
+        existing_file = self.repository.get_active_by_name(path_id=parent_path.path_id, original_name=original_name)
         should_encrypt = (
             self.setting_service.get_bool("storage.encryption_enabled", True)
             if encryption_enabled is None
             else encryption_enabled
         )
+
+        if existing_file is not None and conflict_strategy == "overwrite":
+            try:
+                stored_object = await self.storage_service.save_upload_file(
+                    upload_file=upload_file,
+                    file_id=existing_file.file_id,
+                    encryption_enabled=should_encrypt,
+                    parent_storage_path=parent_path.storage_path,
+                )
+                self.repository.update_upload_content_metadata(
+                    existing_file,
+                    mime_type=mime_type,
+                    file_ext=file_ext,
+                    file_type=file_type,
+                    size_bytes=stored_object.size_bytes,
+                    checksum_sha256=stored_object.checksum_sha256,
+                    encryption_enabled=should_encrypt,
+                    key_wrap_version=stored_object.key_wrap_version,
+                    is_hidden=is_hidden,
+                    user_id=current_user.user_id,
+                )
+                self.audit_service.record(
+                    user_id=current_user.user_id,
+                    action_type="upload_file",
+                    target_type="file",
+                    target_id=existing_file.file_id,
+                    result="success",
+                    detail={
+                        "path_id": parent_path.path_id,
+                        "file_type": file_type,
+                        "size_bytes": stored_object.size_bytes,
+                        "encryption_enabled": should_encrypt,
+                        "conflict_strategy": conflict_strategy,
+                    },
+                    client_ip=client_ip,
+                )
+                self.db.commit()
+                self.db.refresh(existing_file)
+                self.logger.info(
+                    "文件覆盖上传完成",
+                    extra={
+                        "action": "upload_file",
+                        "target_type": "file",
+                        "target_id": existing_file.file_id,
+                        "result": "success",
+                    },
+                )
+                return self._to_upload_response(existing_file)
+            except Exception:
+                self.db.rollback()
+                self._record_failed_upload(current_user.user_id, client_ip, "upload_failed")
+                raise
+
+        original_name = self._available_file_name(parent_path.path_id, original_name)
+        file_ext = normalize_extension(original_name)
+        file_type = detect_file_type(file_ext, mime_type)
 
         stored_object: StoredObject | None = None
         try:
@@ -1002,16 +1058,12 @@ class FileService:
         remark = self._normalize_optional_text(payload.remark)
         summary_content = self._normalize_optional_text(payload.summary_content)
         original_name = payload.original_name.strip() if payload.original_name is not None else None
-        if (
-            original_name is not None
-            and self.repository.get_active_by_name(
-                path_id=parent_path.path_id,
-                original_name=original_name,
+        if original_name is not None:
+            original_name = self._available_file_name(
+                parent_path.path_id,
+                original_name,
                 exclude_file_id=file_info.file_id,
             )
-            is not None
-        ):
-            raise ConflictError("同名文件已存在")
         self.repository.update_metadata(
             file_info,
             original_name=original_name,
@@ -1230,23 +1282,11 @@ class FileService:
             )
             raise NotFoundError("目标目录不存在")
 
-        if (
-            target_path.path_id != file_info.path_id
-            and self.repository.get_active_by_name(
-                path_id=target_path.path_id,
-                original_name=file_info.original_name,
-                exclude_file_id=file_info.file_id,
-            )
-            is not None
-        ):
-            self._record_file_action_failure(
-                user_id=current_user.user_id,
-                client_ip=client_ip,
-                file_id=file_id,
-                action_type="move_file",
-                reason="duplicate_file_name",
-            )
-            raise ConflictError("目标目录下已存在同名文件")
+        target_name = self._available_file_name(
+            target_path.path_id,
+            file_info.original_name,
+            exclude_file_id=file_info.file_id,
+        )
 
         original_storage_path = file_info.storage_path
         new_storage_path = original_storage_path
@@ -1259,6 +1299,7 @@ class FileService:
         self.repository.move_to_path(
             file_info,
             path_id=target_path.path_id,
+            original_name=target_name,
             visibility_type="normal",
             user_id=current_user.user_id,
         )
@@ -1587,8 +1628,7 @@ class FileService:
         parent_path = self.path_repository.get_active_by_path_id(path_id)
         if parent_path is None:
             raise NotFoundError("目录不存在")
-        if self.repository.get_active_by_name(path_id=path_id, original_name=target_name) is not None:
-            raise ConflictError("同名文件已存在")
+        target_name = self._available_file_name(path_id, target_name)
         stored_object = self.storage_service.save_bytes(
             content=content.encode("utf-8"),
             file_id=target_file_id,
@@ -1687,13 +1727,36 @@ class FileService:
     def _unique_export_name(original_name: str, used_names: set[str]) -> str:
         safe_name = original_name.replace("\\", "_").replace("/", "_").strip() or "file"
         candidate = safe_name
-        suffix = 1
+        index = 1
         path = Path(safe_name)
         while candidate in used_names:
-            candidate = f"{path.stem} ({suffix}){path.suffix}"
-            suffix += 1
+            candidate = FileService._numbered_file_name(path, index)
+            index += 1
         used_names.add(candidate)
         return candidate
+
+    def _available_file_name(self, path_id: str, original_name: str, *, exclude_file_id: str | None = None) -> str:
+        """生成同目录内可用展示文件名，避免向用户返回重名冲突。"""
+
+        safe_name = Path(original_name).name.strip() or "unnamed"
+        candidate = safe_name
+        index = 1
+        path = Path(safe_name)
+        while (
+            self.repository.get_active_by_name(
+                path_id=path_id,
+                original_name=candidate,
+                exclude_file_id=exclude_file_id,
+            )
+            is not None
+        ):
+            candidate = self._numbered_file_name(path, index)
+            index += 1
+        return candidate
+
+    @staticmethod
+    def _numbered_file_name(path: Path, index: int) -> str:
+        return f"{path.stem}({index}){path.suffix}"
 
     @staticmethod
     def _iter_bytes(content: bytes) -> Iterator[bytes]:

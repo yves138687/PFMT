@@ -14,7 +14,7 @@ from app.core.config import Settings, get_settings
 from app.models.user import UserAccount
 from app.repositories.setting_repository import SettingRepository
 from app.schemas.auth import LoginRequest, TokenResponse, UserProfile
-from app.schemas.file import FileUploadResponse, MarkdownReadResponse
+from app.schemas.file import FileConflictStrategy, FileUploadResponse, MarkdownReadResponse
 from app.schemas.path import PathCreateRequest, PathRead
 from app.schemas.setting import SettingUpdateRequest
 from app.services.auth_service import AuthService
@@ -297,6 +297,7 @@ async def upload_file_compat(
     file: UploadFile = File(...),
     path_id: str = Form(default="root"),
     encrypt: bool | None = Form(default=None),
+    conflict_strategy: FileConflictStrategy = Form(default="rename"),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -311,6 +312,7 @@ async def upload_file_compat(
         client_ip=client_ip,
         encryption_enabled=encrypt,
         is_hidden=False,
+        conflict_strategy=conflict_strategy,
     )
 
 

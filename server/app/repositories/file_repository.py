@@ -150,6 +150,33 @@ class FileRepository:
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 
+    def update_upload_content_metadata(
+        self,
+        file_info: FileInfo,
+        *,
+        mime_type: str | None,
+        file_ext: str | None,
+        file_type: str,
+        size_bytes: int,
+        checksum_sha256: str,
+        encryption_enabled: bool,
+        key_wrap_version: str | None,
+        is_hidden: bool,
+        user_id: str,
+    ) -> None:
+        """更新覆盖上传后的文件内容元数据。"""
+
+        file_info.mime_type = mime_type
+        file_info.file_ext = file_ext
+        file_info.file_type = file_type
+        file_info.size_bytes = size_bytes
+        file_info.checksum_sha256 = checksum_sha256
+        file_info.encryption_enabled = encryption_enabled
+        file_info.key_wrap_version = key_wrap_version
+        file_info.is_hidden = is_hidden
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
     def update_storage_path(self, file_info: FileInfo, *, storage_path: str, user_id: str) -> None:
         """更新文件移动后的真实存储路径。"""
 
@@ -157,10 +184,20 @@ class FileRepository:
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 
-    def move_to_path(self, file_info: FileInfo, *, path_id: str, visibility_type: str, user_id: str) -> None:
+    def move_to_path(
+        self,
+        file_info: FileInfo,
+        *,
+        path_id: str,
+        original_name: str | None = None,
+        visibility_type: str,
+        user_id: str,
+    ) -> None:
         """移动文件到新的业务目录。"""
 
         file_info.path_id = path_id
+        if original_name is not None:
+            file_info.original_name = original_name
         file_info.visibility_type = visibility_type
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
