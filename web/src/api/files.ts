@@ -72,6 +72,19 @@ export const filesApi = {
   deleteFile(fileId: string, _showHidden?: boolean) {
     return http.delete<void>(`/files/${encodeURIComponent(fileId)}`)
   },
+  exportFile(fileId: string, _showHidden?: boolean) {
+    return http.blobResponse(`/files/${encodeURIComponent(fileId)}/export`, {
+      method: 'GET'
+    })
+  },
+  exportFiles(fileIds: string[], _showHidden?: boolean) {
+    return http.blobResponse('/files/export', {
+      method: 'POST',
+      body: {
+        file_ids: fileIds
+      }
+    })
+  },
   getMarkdownFile(fileId: string, _showHidden?: boolean) {
     return http.get<MarkdownFileContent>(`/files/${encodeURIComponent(fileId)}/markdown`)
   },

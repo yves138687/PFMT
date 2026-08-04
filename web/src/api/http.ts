@@ -161,7 +161,17 @@ export async function request<T>(path: string, options: RequestOptions = {}) {
   }
 }
 
+export interface BlobResponse {
+  blob: Blob
+  headers: Headers
+}
+
 export async function requestBlob(path: string, options: RequestOptions = {}) {
+  const response = await requestBlobResponse(path, options)
+  return response.blob
+}
+
+export async function requestBlobResponse(path: string, options: RequestOptions = {}): Promise<BlobResponse> {
   const { body: _body, query, skipAuth, skipErrorMessage, headers: initHeaders, ...init } = options
   const headers = new Headers(initHeaders)
   const token = getAccessToken()
@@ -169,11 +179,20 @@ export async function requestBlob(path: string, options: RequestOptions = {}) {
     headers.set('Authorization', `Bearer ${token}`)
   }
 
+  let requestBody: BodyInit | undefined
+  if (_body instanceof FormData) {
+    requestBody = _body
+  } else if (_body !== undefined) {
+    requestBody = JSON.stringify(_body)
+    headers.set('Content-Type', headers.get('Content-Type') ?? 'application/json')
+  }
+
   let response: Response
   try {
     response = await fetch(buildUrl(path, query), {
       ...init,
-      headers
+      headers,
+      body: requestBody
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '网络请求失败'
@@ -195,7 +214,10 @@ export async function requestBlob(path: string, options: RequestOptions = {}) {
     throw new ApiError(message, response.status, payload)
   }
 
-  return response.blob()
+  return {
+    blob: await response.blob(),
+    headers: response.headers
+  }
 }
 
 export const http = {
@@ -207,5 +229,6 @@ export const http = {
   patch: <T>(path: string, body?: unknown, options?: RequestOptions) =>
     request<T>(path, { ...options, body, method: 'PATCH' }),
   delete: <T>(path: string, options?: RequestOptions) => request<T>(path, { ...options, method: 'DELETE' }),
-  blob: (path: string, options?: RequestOptions) => requestBlob(path, { ...options, method: 'GET' })
+  blob: (path: string, options?: RequestOptions) => requestBlob(path, { ...options, method: 'GET' }),
+  blobResponse: (path: string, options?: RequestOptions) => requestBlobResponse(path, options)
 }

@@ -232,6 +232,27 @@ class DocumentMergeRequest(BaseModel):
         return normalized
 
 
+class FileExportRequest(BaseModel):
+    """批量导出文件请求。"""
+
+    file_ids: list[str] = Field(min_length=1, max_length=100)
+
+    @field_validator("file_ids")
+    @classmethod
+    def validate_file_ids(cls, value: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            file_id = item.strip()
+            if not file_id or file_id in seen:
+                continue
+            seen.add(file_id)
+            normalized.append(file_id)
+        if not normalized:
+            raise ValueError("至少选择一个文件")
+        return normalized
+
+
 class FilePreviewTokenResponse(BaseModel):
     """短时效文件预览 Token 响应。"""
 

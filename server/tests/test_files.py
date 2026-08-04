@@ -1,5 +1,7 @@
 from pathlib import Path
 from datetime import timedelta, timezone
+from io import BytesIO
+import zipfile
 
 import jwt
 from fastapi.testclient import TestClient
@@ -262,6 +264,134 @@ def test_image_preview_stream_decrypts_uploaded_content(
     assert preview_response.status_code == 200
     assert preview_response.headers["content-type"].startswith("image/png")
     assert preview_response.content == payload
+
+
+def test_single_file_export_streams_decrypted_original_content(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """单文件导出返回原始文件名和解密后的文件本体。"""
+
+    payload = "导出正文\nplain export\n".encode("utf-8")
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("export.txt", payload, "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    export_response = client.get(f"/api/files/{file_id}/export", headers=auth_headers)
+
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"].startswith("text/plain")
+    assert "filename*=UTF-8''export.txt" in export_response.headers["content-disposition"]
+    assert export_response.content == payload
+
+    with Session(get_engine()) as db:
+        stmt = select(AuditLog).where(
+            AuditLog.action_type == "export_file",
+            AuditLog.action_result == "success",
+            AuditLog.target_id == file_id,
+        )
+        assert db.execute(stmt).scalar_one_or_none() is not None
+
+
+def test_batch_export_single_file_returns_original_file_body(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """批量导出只有一个文件时直接返回文件本体，不生成 zip。"""
+
+    payload = b"single body"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("single.bin", payload, "application/octet-stream")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    export_response = client.post(
+        "/api/files/export",
+        headers=auth_headers,
+        json={"file_ids": [file_id]},
+    )
+
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"].startswith("application/octet-stream")
+    assert "filename*=UTF-8''single.bin" in export_response.headers["content-disposition"]
+    assert export_response.content == payload
+
+
+def test_batch_export_multiple_files_returns_zip_with_unique_names(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """多个文件批量导出为 zip，包内平铺文件并处理重名。"""
+
+    first = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("same.txt", b"first", "text/plain")},
+    )
+    second = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("same.txt", b"second", "text/plain")},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    export_response = client.post(
+        "/api/files/export",
+        headers=auth_headers,
+        json={"file_ids": [first.json()["file_id"], second.json()["file_id"]]},
+    )
+
+    assert export_response.status_code == 200
+    assert export_response.headers["content-type"].startswith("application/zip")
+    assert export_response.headers["content-disposition"].endswith(".zip")
+    with zipfile.ZipFile(BytesIO(export_response.content)) as archive:
+        assert archive.namelist() == ["same.txt", "same (1).txt"]
+        assert archive.read("same.txt") == b"first"
+        assert archive.read("same (1).txt") == b"second"
+
+
+def test_export_respects_hidden_visibility_flag(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏文件默认不可导出，开启当前会话隐藏展示后才可导出。"""
+
+    payload = b"hidden export"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "is_hidden": "true"},
+        files={"file": ("hidden-export.txt", payload, "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    assert client.get(f"/api/files/{file_id}/export", headers=auth_headers).status_code == 404
+    hidden_batch = client.post(
+        "/api/files/export",
+        headers=auth_headers,
+        json={"file_ids": [file_id]},
+    )
+    assert hidden_batch.status_code == 404
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_export = client.get(f"/api/files/{file_id}/export", headers=auth_headers)
+    assert visible_export.status_code == 200
+    assert visible_export.content == payload
 
 
 def test_unencrypted_video_stream_supports_http_range(

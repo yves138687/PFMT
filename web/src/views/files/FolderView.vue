@@ -8,6 +8,7 @@ import {
   Close,
   Delete,
   DocumentAdd,
+  Download,
   Edit,
   FolderAdd,
   FolderDelete,
@@ -27,6 +28,7 @@ import FileUploadDialog from '@/components/FileUploadDialog.vue'
 import { usePathStore } from '@/stores/pathStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { DocumentFormat, FileDetail, FileInfo, FilePathNode } from '@/types/files'
+import { saveBlobResponse } from '@/utils/download'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
 type FileViewMode = 'list' | 'grid'
@@ -51,6 +53,7 @@ const createDocumentVisible = ref(false)
 const createDocumentLoading = ref(false)
 const moveFileVisible = ref(false)
 const moveFileLoading = ref(false)
+const exportFilesLoading = ref(false)
 const moveFileTargetPathId = ref('root')
 const selectedFiles = ref<FileInfo[]>([])
 const fileTableRef = ref<{
@@ -664,6 +667,33 @@ function handleSelectionChange(selection: FileInfo[]) {
   selectedFiles.value = selection
 }
 
+async function exportSelectedFiles() {
+  if (!selectedFiles.value.length) {
+    ElMessage.warning('请先选择要导出的文件')
+    return
+  }
+
+  exportFilesLoading.value = true
+  try {
+    const response = await filesApi.exportFiles(
+      selectedFiles.value.map((file) => file.file_id),
+      settingsStore.showHiddenContent
+    )
+    const fallbackName =
+      selectedFiles.value.length === 1 ? selectedFiles.value[0].original_name : 'pfmt-export.zip'
+    saveBlobResponse(response, fallbackName)
+    ElMessage.success(selectedFiles.value.length === 1 ? '文件已开始导出' : '压缩包已开始导出')
+  } finally {
+    exportFilesLoading.value = false
+  }
+}
+
+async function exportSingleFile(file: FileInfo) {
+  const response = await filesApi.exportFile(file.file_id, settingsStore.showHiddenContent)
+  saveBlobResponse(response, file.original_name)
+  ElMessage.success('文件已开始导出')
+}
+
 async function mergeSelectedDocuments() {
   if (!canMergeSelectedDocuments.value) {
     ElMessage.warning('请至少选择两个文档')
@@ -972,6 +1002,9 @@ onBeforeUnmount(() => {
           <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFiles">
             移动所选
           </el-button>
+          <el-button :icon="Download" :disabled="!selectedFiles.length" :loading="exportFilesLoading" @click="exportSelectedFiles">
+            导出所选
+          </el-button>
           <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
             合并文档
           </el-button>
@@ -1011,10 +1044,13 @@ onBeforeUnmount(() => {
           <el-table-column label="更新时间" width="180">
             <template #default="{ row }">{{ formatDateTime(row.updated_at ?? row.created_at) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="260" fixed="right">
+          <el-table-column label="操作" width="320" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" :icon="View" :disabled="!canOpenPreview(row)" @click="openFileDetail(row)">
                 查看
+              </el-button>
+              <el-button link :icon="Download" @click="exportSingleFile(row)">
+                导出
               </el-button>
               <el-button link :icon="InfoFilled" @click="openProperties(row)">
                 属性
@@ -1054,6 +1090,7 @@ onBeforeUnmount(() => {
               <el-button link type="primary" :icon="View" :disabled="!canOpenPreview(file)" @click="openFileDetail(file)">
                 查看
               </el-button>
+              <el-button link :icon="Download" @click="exportSingleFile(file)">导出</el-button>
               <el-button link :icon="InfoFilled" @click="openProperties(file)">属性</el-button>
               <el-button link :icon="View" @click="toggleFileHidden(file)">
                 {{ file.is_hidden ? '显示' : '隐藏' }}

@@ -1,8 +1,10 @@
 import logging
 import re
+import zipfile
 from datetime import timedelta, timezone
 from html import escape
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 from collections.abc import Iterator
 from typing import Any
@@ -28,6 +30,7 @@ from app.schemas.file import (
     DocumentReadResponse,
     DocumentSaveRequest,
     FileDetailResponse,
+    FileExportRequest,
     FileListItem,
     FileMoveRequest,
     FilePreviewTokenResponse,
@@ -873,6 +876,107 @@ class FileService:
         )
         return self._to_detail_response(file_info, parent_path)
 
+    def export_file_content(
+        self,
+        *,
+        file_id: str,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> tuple[FileInfo, Iterator[bytes]]:
+        """导出单个文件本体，返回解密后的明文流。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="export_file",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        self.repository.mark_accessed(file_info)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="export_file",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"size_bytes": file_info.size_bytes},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return file_info, self.storage_service.iter_content_chunks(file_info)
+
+    def export_files_content(
+        self,
+        *,
+        payload: FileExportRequest,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> tuple[str, str, int, Iterator[bytes]]:
+        """批量导出文件：单文件返回本体，多文件返回 zip 压缩包。"""
+
+        if len(payload.file_ids) == 1:
+            file_info, chunks = self.export_file_content(
+                file_id=payload.file_ids[0],
+                show_hidden=show_hidden,
+                current_user=current_user,
+                client_ip=client_ip,
+            )
+            return (
+                file_info.original_name,
+                file_info.mime_type or "application/octet-stream",
+                file_info.size_bytes,
+                chunks,
+            )
+
+        files: list[FileInfo] = []
+        try:
+            for file_id in payload.file_ids:
+                file_info, _parent_path = self._get_visible_file_and_path(
+                    file_id=file_id,
+                    show_hidden=show_hidden,
+                    action_type="export_files",
+                    current_user=current_user,
+                    client_ip=client_ip,
+                )
+                files.append(file_info)
+
+            zip_buffer = BytesIO()
+            used_names: set[str] = set()
+            with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for file_info in files:
+                    archive_name = self._unique_export_name(file_info.original_name, used_names)
+                    with archive.open(archive_name, mode="w") as zip_entry:
+                        for chunk in self.storage_service.iter_content_chunks(file_info):
+                            zip_entry.write(chunk)
+                    self.repository.mark_accessed(file_info)
+
+            zip_bytes = zip_buffer.getvalue()
+            export_name = f"pfmt-export-{now_utc().strftime('%Y%m%d-%H%M%S')}.zip"
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="export_files",
+                target_type="file",
+                result="success",
+                detail={"count": len(files), "size_bytes": len(zip_bytes)},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            return export_name, "application/zip", len(zip_bytes), self._iter_bytes(zip_bytes)
+        except Exception:
+            self.db.rollback()
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="export_files",
+                target_type="file",
+                result="failed",
+                detail={"count": len(payload.file_ids), "reason": "export_failed"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
     def update_file_remark(
         self,
         *,
@@ -1517,6 +1621,24 @@ class FileService:
     def _default_converted_name(original_name: str, target_format: str) -> str:
         stem = Path(original_name).stem or "document"
         return f"{stem}{document_format_extension(target_format)}"
+
+    @staticmethod
+    def _unique_export_name(original_name: str, used_names: set[str]) -> str:
+        safe_name = original_name.replace("\\", "_").replace("/", "_").strip() or "file"
+        candidate = safe_name
+        suffix = 1
+        path = Path(safe_name)
+        while candidate in used_names:
+            candidate = f"{path.stem} ({suffix}){path.suffix}"
+            suffix += 1
+        used_names.add(candidate)
+        return candidate
+
+    @staticmethod
+    def _iter_bytes(content: bytes) -> Iterator[bytes]:
+        chunk_size = 64 * 1024
+        for start in range(0, len(content), chunk_size):
+            yield content[start : start + chunk_size]
 
     def _path_visible_for_file(self, file_info: FileInfo, *, include_hidden: bool) -> bool:
         parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)

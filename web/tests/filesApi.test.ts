@@ -383,6 +383,27 @@ describe('filesApi', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE')
   })
 
+  it('exports one file and selected files without visibility query', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('single-export', { status: 200 }))
+      .mockResolvedValueOnce(new Response('batch-export', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.exportFile('file_1', true)
+    await filesApi.exportFiles(['file_1', 'file_2'], true)
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/export')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/api/files/export')
+    expect(String(fetchMock.mock.calls[1][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string)).toEqual({
+      file_ids: ['file_1', 'file_2']
+    })
+  })
+
   it('creates tags through tags API', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ tag_id: 'tag_1', tag_name: 'work' }, 201))
     vi.stubGlobal('fetch', fetchMock)

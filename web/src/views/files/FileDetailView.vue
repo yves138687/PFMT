@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, InfoFilled, Refresh } from '@element-plus/icons-vue'
+import { ArrowLeft, Download, InfoFilled, Refresh } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 
 import { filesApi } from '@/api/files'
 import FilePropertiesDialog from '@/components/FilePropertiesDialog.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { FileDetail } from '@/types/files'
+import { saveBlobResponse } from '@/utils/download'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 import { renderMarkdown } from '@/utils/markdown'
 
@@ -21,6 +23,7 @@ const loading = ref(false)
 const markdownLoading = ref(false)
 const textLoading = ref(false)
 const previewLoading = ref(false)
+const exportLoading = ref(false)
 const propertiesVisible = ref(false)
 
 const fileId = computed(() => (typeof route.params.fileId === 'string' ? route.params.fileId : ''))
@@ -143,6 +146,21 @@ function handleFileSaved(updatedFile: FileDetail) {
   void loadPreviewBlob()
 }
 
+async function exportCurrentFile() {
+  if (!detail.value) {
+    return
+  }
+
+  exportLoading.value = true
+  try {
+    const response = await filesApi.exportFile(detail.value.file_id, settingsStore.showHiddenContent)
+    saveBlobResponse(response, detail.value.original_name)
+    ElMessage.success('文件已开始导出')
+  } finally {
+    exportLoading.value = false
+  }
+}
+
 watch(
   [fileId, () => settingsStore.showHiddenContent],
   () => {
@@ -165,6 +183,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="file-detail-view__actions">
         <el-button :icon="ArrowLeft" @click="backToFolder">返回列表</el-button>
+        <el-button :icon="Download" :disabled="!detail" :loading="exportLoading" @click="exportCurrentFile">导出</el-button>
         <el-button :icon="InfoFilled" :disabled="!detail" @click="propertiesVisible = true">属性</el-button>
         <el-button :icon="Refresh" :loading="loading || markdownLoading || textLoading || previewLoading" @click="loadFileDetail">刷新</el-button>
       </div>

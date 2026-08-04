@@ -56,6 +56,16 @@ describe('FolderView source contract', () => {
     expect(source).not.toContain('openMoveFile(row)')
   })
 
+  it('exports selected files and offers row-level export', () => {
+    expect(source).toContain('导出所选')
+    expect(source).toContain('exportSelectedFiles')
+    expect(source).toContain('exportSingleFile')
+    expect(source).toContain('filesApi.exportFiles')
+    expect(source).toContain('filesApi.exportFile')
+    expect(source).toContain(':disabled="!selectedFiles.length"')
+    expect(source).toContain('saveBlobResponse')
+  })
+
   it('supports merging selected documents into a new file', () => {
     expect(source).toContain('合并文档')
     expect(source).toContain('openMergeSelectedDocuments')

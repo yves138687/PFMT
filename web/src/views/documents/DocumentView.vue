@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Refresh, Switch, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, Download, Refresh, Switch, UploadFilled } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { filesApi } from '@/api/files'
+import DocumentOutline from '@/components/DocumentOutline.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { DocumentContent, DocumentFormat } from '@/types/files'
+import {
+  addOutlineIdsToHtml,
+  applyOutlineIdsToContainer,
+  buildHtmlOutline,
+  buildHtmlSourceOutline,
+  buildMarkdownOutline
+} from '@/utils/documentOutline'
+import { saveBlobResponse } from '@/utils/download'
 import { renderMarkdown } from '@/utils/markdown'
 
 type DocumentMode = 'read' | 'edit' | 'source'
@@ -30,7 +39,13 @@ const mode = ref<DocumentMode>('read')
 const loading = ref(false)
 const saving = ref(false)
 const converting = ref(false)
+const exporting = ref(false)
 const convertVisible = ref(false)
+const editorVersion = ref(0)
+const activeOutlineId = ref('')
+const canvasRef = ref<HTMLElement | null>(null)
+const sourceRef = ref<HTMLTextAreaElement | null>(null)
+const headingSelector = 'h1, h2, h3, h4, h5, h6'
 const convertForm = ref<{ target_format: DocumentFormat; target_name: string }>({
   target_format: 'html',
   target_name: ''
@@ -41,7 +56,7 @@ const fromPathId = computed(() => {
   const pathId = route.query.pathId
   return typeof pathId === 'string' ? pathId : undefined
 })
-const safeRenderedHtml = computed(() => DOMPurify.sanitize(documentContent.value?.rendered_html || ''))
+const safeRenderedHtml = computed(() => addOutlineIdsToHtml(DOMPurify.sanitize(documentContent.value?.rendered_html || '')))
 const documentFormatText = computed(() => {
   const format = documentContent.value?.document_format
   if (format === 'markdown') {
@@ -52,11 +67,36 @@ const documentFormatText = computed(() => {
   }
   return '纯文本'
 })
+const outlineItems = computed(() => {
+  const currentDocument = documentContent.value
+  if (!currentDocument || currentDocument.document_format === 'plain_text') {
+    return []
+  }
+  if (mode.value === 'source') {
+    if (currentDocument.document_format === 'markdown') {
+      return buildMarkdownOutline(sourceContent.value)
+    }
+    return buildHtmlSourceOutline(sourceContent.value)
+  }
+  if (mode.value === 'edit') {
+    editorVersion.value
+    return buildHtmlOutline(editor.value?.getHTML() ?? '')
+  }
+  if (currentDocument.document_format === 'markdown') {
+    return buildMarkdownOutline(sourceContent.value)
+  }
+  return buildHtmlOutline(safeRenderedHtml.value)
+})
+const showOutline = computed(() => documentContent.value?.document_format !== 'plain_text')
 
 const editor = useEditor({
   extensions: [StarterKit],
   editable: true,
-  content: ''
+  content: '',
+  onUpdate() {
+    editorVersion.value += 1
+    void nextTick(applyEditorOutlineIds)
+  }
 })
 
 function backToFolder() {
@@ -75,7 +115,13 @@ function setMode(nextMode: DocumentMode) {
   mode.value = nextMode
   if (nextMode === 'edit') {
     editor.value?.commands.setContent(editorHtmlFromSource())
+    editorVersion.value += 1
+    void nextTick(applyEditorOutlineIds)
   }
+  if (nextMode === 'source') {
+    void nextTick(resizeSourceTextarea)
+  }
+  activeOutlineId.value = outlineItems.value[0]?.id ?? ''
 }
 
 function editorHtmlFromSource() {
@@ -123,6 +169,12 @@ async function loadDocument() {
     documentContent.value = response
     sourceContent.value = response.content
     editor.value?.commands.setContent(editorHtmlFromSource())
+    editorVersion.value += 1
+    activeOutlineId.value = ''
+    await nextTick()
+    applyEditorOutlineIds()
+    resizeSourceTextarea()
+    activeOutlineId.value = outlineItems.value[0]?.id ?? ''
   } finally {
     loading.value = false
   }
@@ -249,10 +301,171 @@ async function saveDocument() {
     documentContent.value = response
     sourceContent.value = response.content
     editor.value?.commands.setContent(editorHtmlFromSource())
+    editorVersion.value += 1
+    await nextTick()
+    applyEditorOutlineIds()
+    resizeSourceTextarea()
+    activeOutlineId.value = outlineItems.value[0]?.id ?? ''
     ElMessage.success('文档已保存')
   } finally {
     saving.value = false
   }
+}
+
+async function exportDocument() {
+  const currentDocument = documentContent.value
+  if (!currentDocument) {
+    return
+  }
+
+  exporting.value = true
+  try {
+    const response = await filesApi.exportFile(currentDocument.file_id, settingsStore.showHiddenContent)
+    saveBlobResponse(response, currentDocument.original_name)
+    ElMessage.success('文件已开始导出')
+  } finally {
+    exporting.value = false
+  }
+}
+
+function applyEditorOutlineIds() {
+  if (mode.value !== 'edit') {
+    return
+  }
+  applyOutlineIdsToContainer(canvasRef.value?.querySelector('.ProseMirror') ?? null)
+}
+
+function scrollToOutline(id: string, index = -1) {
+  const container = canvasRef.value
+  if (!container) {
+    return
+  }
+
+  if (mode.value === 'source') {
+    scrollSourceToOutline(id)
+    return
+  }
+
+  const target = findOutlineTarget(container, id, index)
+  if (!target) {
+    return
+  }
+
+  activeOutlineId.value = id
+  scrollElementIntoCanvas(container, target)
+}
+
+function updateActiveOutline() {
+  const container = canvasRef.value
+  if (!container || outlineItems.value.length === 0) {
+    activeOutlineId.value = ''
+    return
+  }
+
+  if (mode.value === 'source') {
+    updateActiveSourceOutline(container)
+    return
+  }
+
+  const headings = outlineItems.value
+    .map((item, index) => {
+      const element = findOutlineTarget(container, item.id, index)
+      if (!element) {
+        return null
+      }
+      const top = element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      return { id: item.id, top }
+    })
+    .filter((item): item is { id: string; top: number } => item !== null)
+
+  const current = headings
+    .filter((heading) => heading.top <= container.scrollTop + 32)
+    .at(-1)
+
+  activeOutlineId.value = current?.id ?? headings[0]?.id ?? ''
+}
+
+function findOutlineTarget(container: HTMLElement, id: string, index = -1) {
+  const headings = Array.from(container.querySelectorAll<HTMLElement>(headingSelector))
+  if (index >= 0 && headings[index]) {
+    return headings[index]
+  }
+
+  const selector = typeof CSS !== 'undefined' && CSS.escape ? `#${CSS.escape(id)}` : `[data-outline-id="${id}"]`
+  return container.querySelector<HTMLElement>(selector)
+}
+
+function scrollElementIntoCanvas(container: HTMLElement, target: HTMLElement) {
+  const targetTop = target.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+  const canScrollCanvas = container.scrollHeight > container.clientHeight + 1
+
+  if (canScrollCanvas) {
+    container.scrollTo({
+      top: targetTop - 14,
+      behavior: 'smooth'
+    })
+    return
+  }
+
+  target.scrollIntoView({
+    behavior: 'smooth',
+    block: 'start'
+  })
+}
+
+function scrollSourceToOutline(id: string) {
+  const container = canvasRef.value
+  const textarea = sourceRef.value
+  const item = outlineItems.value.find((outlineItem) => outlineItem.id === id)
+  if (!container || !textarea || item?.sourceLine === undefined) {
+    return
+  }
+
+  const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 24
+  activeOutlineId.value = id
+  container.scrollTo({
+    top: item.sourceLine * lineHeight,
+    behavior: 'smooth'
+  })
+  focusSourceLine(item.sourceLine)
+}
+
+function updateActiveSourceOutline(container: HTMLElement) {
+  const textarea = sourceRef.value
+  if (!textarea) {
+    activeOutlineId.value = outlineItems.value[0]?.id ?? ''
+    return
+  }
+
+  const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 24
+  const currentLine = Math.max(0, Math.floor((container.scrollTop + 20) / lineHeight))
+  const current = outlineItems.value
+    .filter((item) => item.sourceLine !== undefined && item.sourceLine <= currentLine)
+    .at(-1)
+
+  activeOutlineId.value = current?.id ?? outlineItems.value[0]?.id ?? ''
+}
+
+function focusSourceLine(line: number) {
+  const textarea = sourceRef.value
+  if (!textarea) {
+    return
+  }
+
+  const lines = sourceContent.value.split(/\r?\n/)
+  const start = lines.slice(0, line).reduce((offset, currentLine) => offset + currentLine.length + 1, 0)
+  textarea.focus()
+  textarea.setSelectionRange(start, start)
+}
+
+function resizeSourceTextarea() {
+  const textarea = sourceRef.value
+  if (!textarea) {
+    return
+  }
+
+  textarea.style.height = 'auto'
+  textarea.style.height = `${Math.max(textarea.scrollHeight, 420)}px`
 }
 
 function openConvertDialog() {
@@ -304,6 +517,20 @@ watch(
   { immediate: true }
 )
 
+watch(outlineItems, (items) => {
+  activeOutlineId.value = items[0]?.id ?? ''
+  void nextTick(() => {
+    applyEditorOutlineIds()
+    updateActiveOutline()
+  })
+})
+
+watch(sourceContent, () => {
+  if (mode.value === 'source') {
+    void nextTick(resizeSourceTextarea)
+  }
+})
+
 onBeforeUnmount(() => {
   editor.value?.destroy()
 })
@@ -319,6 +546,7 @@ onBeforeUnmount(() => {
       <div class="document-view__actions">
         <el-button :icon="ArrowLeft" @click="backToFolder">返回列表</el-button>
         <el-button :icon="Refresh" :loading="loading" @click="loadDocument">刷新</el-button>
+        <el-button :icon="Download" :loading="exporting" :disabled="!documentContent" @click="exportDocument">导出</el-button>
         <el-button :icon="Switch" :disabled="!documentContent" @click="openConvertDialog">转换</el-button>
         <el-button type="primary" :icon="UploadFilled" :loading="saving" :disabled="!documentContent" @click="saveDocument">
           保存
@@ -336,10 +564,29 @@ onBeforeUnmount(() => {
         <span class="muted">统一文档打开</span>
       </div>
       <div v-loading="loading" class="panel-body document-view__body">
-        <div v-if="documentContent" class="document-view__canvas" :class="`document-view__canvas--${mode}`">
-          <article v-if="mode === 'read'" class="document-view__rendered" v-html="safeRenderedHtml" />
-          <EditorContent v-else-if="mode === 'edit'" class="document-view__editor" :editor="editor" />
-          <textarea v-else v-model="sourceContent" class="document-view__source" />
+        <div v-if="documentContent" class="document-view__workspace" :class="{ 'document-view__workspace--with-outline': showOutline }">
+          <div
+            ref="canvasRef"
+            class="document-view__canvas"
+            :class="`document-view__canvas--${mode}`"
+            @scroll="updateActiveOutline"
+          >
+            <article v-if="mode === 'read'" class="document-view__rendered" v-html="safeRenderedHtml" />
+            <EditorContent v-else-if="mode === 'edit'" class="document-view__editor" :editor="editor" />
+            <textarea
+              v-else
+              ref="sourceRef"
+              v-model="sourceContent"
+              class="document-view__source"
+              @input="resizeSourceTextarea"
+            />
+          </div>
+          <DocumentOutline
+            v-if="showOutline"
+            :items="outlineItems"
+            :active-id="activeOutlineId"
+            @navigate="scrollToOutline"
+          />
         </div>
         <el-empty v-else description="暂无文档内容" />
       </div>
@@ -385,9 +632,21 @@ onBeforeUnmount(() => {
   min-height: 68vh;
 }
 
+.document-view__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.document-view__workspace--with-outline {
+  grid-template-columns: minmax(0, 1fr) 220px;
+  align-items: start;
+}
+
 .document-view__canvas {
   flex: 1;
   min-height: 62vh;
+  max-height: calc(100vh - 210px);
   overflow: auto;
   padding: 18px;
   background: #fff;
@@ -398,7 +657,7 @@ onBeforeUnmount(() => {
 }
 
 .document-view__canvas--source {
-  padding: 0;
+  padding: 18px;
 }
 
 .document-view__rendered,
@@ -410,8 +669,21 @@ onBeforeUnmount(() => {
 .document-view__rendered :deep(h1),
 .document-view__rendered :deep(h2),
 .document-view__rendered :deep(h3) {
+  scroll-margin-top: 16px;
   margin: 1.2em 0 0.5em;
   line-height: 1.35;
+}
+
+.document-view__rendered :deep(h4),
+.document-view__rendered :deep(h5),
+.document-view__rendered :deep(h6),
+.document-view__editor :deep(h1),
+.document-view__editor :deep(h2),
+.document-view__editor :deep(h3),
+.document-view__editor :deep(h4),
+.document-view__editor :deep(h5),
+.document-view__editor :deep(h6) {
+  scroll-margin-top: 16px;
 }
 
 .document-view__editor :deep(.ProseMirror) {
@@ -421,10 +693,9 @@ onBeforeUnmount(() => {
 
 .document-view__source {
   width: 100%;
-  min-height: 62vh;
-  height: 62vh;
-  padding: 18px;
-  overflow: auto;
+  min-height: calc(62vh - 36px);
+  padding: 0;
+  overflow: hidden;
   resize: none;
   border: 0;
   outline: none;
@@ -437,5 +708,15 @@ onBeforeUnmount(() => {
 
 .document-view__canvas:focus-within {
   border-color: var(--el-color-primary);
+}
+
+@media (max-width: 960px) {
+  .document-view__workspace--with-outline {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .document-view__canvas {
+    max-height: none;
+  }
 }
 </style>

@@ -15,6 +15,7 @@ from app.schemas.file import (
     DocumentReadResponse,
     DocumentSaveRequest,
     FileDetailResponse,
+    FileExportRequest,
     FileListItem,
     FileMoveRequest,
     FilePreviewTokenResponse,
@@ -97,6 +98,63 @@ def search_files(
         limit=limit,
         current_user=current_user,
         client_ip=client_ip,
+    )
+
+
+@router.post("/export")
+def export_files(
+    payload: FileExportRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> StreamingResponse:
+    """导出所选文件；单文件返回本体，多文件返回 zip。"""
+
+    filename, media_type, content_length, chunks = FileService(db, settings).export_files_content(
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+    quoted_name = quote(filename)
+    return StreamingResponse(
+        chunks,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quoted_name}",
+            "Content-Length": str(content_length),
+        },
+    )
+
+
+@router.get("/{file_id}/export")
+def export_file(
+    file_id: str,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> StreamingResponse:
+    """导出单个文件本体，按需解密后返回。"""
+
+    file_info, chunks = FileService(db, settings).export_file_content(
+        file_id=file_id,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+    media_type = file_info.mime_type or "application/octet-stream"
+    quoted_name = quote(file_info.original_name)
+    return StreamingResponse(
+        chunks,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quoted_name}",
+            "Content-Length": str(file_info.size_bytes),
+        },
     )
 
 
