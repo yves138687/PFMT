@@ -335,6 +335,13 @@ def test_batch_export_multiple_files_returns_zip_with_unique_names(
 ) -> None:
     """多个文件批量导出为 zip，包内平铺文件并处理重名。"""
 
+    path_response = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Export", "parent_path_id": "root"},
+    )
+    assert path_response.status_code == 201
+
     first = client.post(
         "/api/files/upload",
         headers=auth_headers,
@@ -344,7 +351,7 @@ def test_batch_export_multiple_files_returns_zip_with_unique_names(
     second = client.post(
         "/api/files/upload",
         headers=auth_headers,
-        data={"path_id": "root"},
+        data={"path_id": path_response.json()["path_id"]},
         files={"file": ("same.txt", b"second", "text/plain")},
     )
     assert first.status_code == 201
