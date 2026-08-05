@@ -34,13 +34,19 @@ describe('FolderView source contract', () => {
 
   it('wires directory creation plus move and delete actions', () => {
     expect(source).toContain('@click="openCreateFolder"')
-    expect(source).toContain('@click="openEditPath"')
-    expect(source).toContain('@click="openMovePath"')
-    expect(source).toContain('@click="deleteCurrentPath"')
+    expect(source).toContain('handlePathAction')
+    expect(source).toContain("command === 'edit-path'")
+    expect(source).toContain("command === 'move-path'")
+    expect(source).toContain("command === 'delete-path'")
+    expect(source).toContain('openEditPath()')
+    expect(source).toContain('openMovePath()')
+    expect(source).toContain('deleteCurrentPath()')
     expect(source).toContain('@selection-change="handleSelectionChange"')
     expect(source).toContain('@click="openMoveSelectedFiles"')
-    expect(source).toContain('@click="toggleFileHidden(row)"')
-    expect(source).toContain('@click="deleteFile(row)"')
+    expect(source).toContain("command === 'toggle-hidden'")
+    expect(source).toContain("command === 'delete'")
+    expect(source).toContain('toggleFileHidden(file)')
+    expect(source).toContain('deleteFile(file)')
   })
 
   it('opens upload dialog for the current folder instead of navigating away', () => {
@@ -100,10 +106,36 @@ describe('FolderView source contract', () => {
     expect(source).toContain('v-model="viewMode"')
     expect(source).toContain('folder-view__grid')
     expect(source).toContain('file-card')
+    expect(source).toContain('folder-view__mobile-list')
+    expect(source).toContain('class="file-row"')
     expect(source).toContain('toggleGridFileSelection')
     expect(source).toContain('isFileSelected(file)')
     expect(source).toContain('@selection-change="handleSelectionChange"')
     expect(source).toContain('selectedFiles.value')
+  })
+
+  it('keeps file names as the primary open target and collapses row actions', () => {
+    expect(source).toContain(':aria-label="`查看${row.original_name}`"')
+    expect(source).toContain('@click="openFileDetail(row)"')
+    expect(source).toContain(':aria-label="`查看${file.original_name}`"')
+    expect(source).toContain('@click="openFileDetail(file)"')
+    expect(source).toContain('type FileActionCommand')
+    expect(source).toContain('fileActionItems(file)')
+    expect(source).toContain('handleFileAction(row, $event)')
+    expect(source).toContain('fileActionsDrawerVisible')
+    expect(source).toContain('<el-drawer')
+    expect(source).toContain('<el-dropdown')
+    expect(source).not.toContain('width="320"')
+    expect(source).not.toContain('class="file-card__actions"')
+  })
+
+  it('uses the shared mobile breakpoint for compact toolbar and drawers', () => {
+    expect(source).toContain("const MOBILE_QUERY = '(max-width: 820px)'")
+    expect(source).toContain('isMobileViewport')
+    expect(source).toContain('filterDrawerVisible')
+    expect(source).toContain('batchActionsDrawerVisible')
+    expect(source).toContain('grid-template-columns: 32px 42px minmax(0, 1fr) 40px')
+    expect(source).toContain('@media (max-width: 820px)')
   })
 
   it('does not expose private directory type in create folder dialog', () => {

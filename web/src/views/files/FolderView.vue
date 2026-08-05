@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
+  ArrowDown,
   ArrowRight,
   Close,
   Delete,
   DocumentAdd,
   Download,
   Edit,
+  Filter,
   FolderAdd,
   FolderDelete,
   InfoFilled,
+  MoreFilled,
+  Operation,
   Rank,
   Refresh,
   UploadFilled,
@@ -32,12 +36,23 @@ import { saveBlobResponse } from '@/utils/download'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
 type FileViewMode = 'list' | 'grid'
+type FileActionCommand = 'export' | 'properties' | 'toggle-hidden' | 'delete'
+type PathActionCommand = 'create-folder' | 'create-document' | 'edit-path' | 'move-path' | 'delete-path'
 
 interface PathOption {
   label: string
   value: string
   fullPath: string
 }
+
+interface FileActionItem {
+  command: FileActionCommand
+  label: string
+  icon: Component
+  danger?: boolean
+}
+
+const MOBILE_QUERY = '(max-width: 820px)'
 
 const route = useRoute()
 const router = useRouter()
@@ -79,6 +94,11 @@ const fileKeyword = ref('')
 const tagFilter = ref<string[]>([])
 const fileTypeFilter = ref<string[]>([])
 const viewMode = ref<FileViewMode>('list')
+const isMobileViewport = ref(detectMobileViewport())
+const activeActionFile = ref<FileInfo | null>(null)
+const fileActionsDrawerVisible = ref(false)
+const filterDrawerVisible = ref(false)
+const batchActionsDrawerVisible = ref(false)
 const uploadVisible = ref(false)
 const imagePreviewVisible = ref(false)
 const imagePreviewIndex = ref(0)
@@ -123,6 +143,7 @@ const editPathForm = ref<{
   description: '',
   is_hidden: false
 })
+let mobileMediaQuery: MediaQueryList | null = null
 
 const currentPathId = computed(() => (typeof route.params.pathId === 'string' ? route.params.pathId : 'root'))
 
@@ -189,13 +210,59 @@ const selectedDocumentFiles = computed(() => selectedFiles.value.filter((file) =
 const canMergeSelectedDocuments = computed(
   () => selectedFiles.value.length >= 2 && selectedDocumentFiles.value.length === selectedFiles.value.length
 )
+const activeFileActions = computed(() => (activeActionFile.value ? fileActionItems(activeActionFile.value) : []))
 
-function canOpenPreview(file: FileInfo) {
+function detectMobileViewport() {
+  return typeof window !== 'undefined' && window.matchMedia(MOBILE_QUERY).matches
+}
+
+function handleViewportChange(event?: MediaQueryListEvent | MediaQueryList) {
+  isMobileViewport.value = event?.matches ?? mobileMediaQuery?.matches ?? false
+  if (!isMobileViewport.value) {
+    filterDrawerVisible.value = false
+    batchActionsDrawerVisible.value = false
+    fileActionsDrawerVisible.value = false
+  }
+  void nextTick(syncTableSelection)
+}
+
+function fileActionItems(file: FileInfo): FileActionItem[] {
+  return [
+    {
+      command: 'export',
+      label: '导出',
+      icon: Download
+    },
+    {
+      command: 'properties',
+      label: '属性',
+      icon: InfoFilled
+    },
+    {
+      command: 'toggle-hidden',
+      label: file.is_hidden ? '显示' : '隐藏',
+      icon: View
+    },
+    {
+      command: 'delete',
+      label: '删除',
+      icon: Delete,
+      danger: true
+    }
+  ]
+}
+
+function isFileActionCommand(command: unknown): command is FileActionCommand {
+  return command === 'export' || command === 'properties' || command === 'toggle-hidden' || command === 'delete'
+}
+
+function isPathActionCommand(command: unknown): command is PathActionCommand {
   return (
-    file.file_type === 'text' ||
-    ['.md', '.markdown'].includes((file.file_ext ?? '').toLowerCase()) ||
-    file.mime_type === 'text/markdown' ||
-    ['image', 'pdf', 'video'].includes(file.file_type)
+    command === 'create-folder' ||
+    command === 'create-document' ||
+    command === 'edit-path' ||
+    command === 'move-path' ||
+    command === 'delete-path'
   )
 }
 
@@ -512,6 +579,84 @@ function clearImagePreviewUrls() {
 function openProperties(file: FileInfo) {
   propertiesFile.value = file
   propertiesVisible.value = true
+}
+
+function openFileActions(file: FileInfo) {
+  activeActionFile.value = file
+  fileActionsDrawerVisible.value = true
+}
+
+async function handleFileAction(file: FileInfo, command: unknown) {
+  if (!isFileActionCommand(command)) {
+    return
+  }
+
+  fileActionsDrawerVisible.value = false
+  activeActionFile.value = null
+  if (command === 'export') {
+    await exportSingleFile(file)
+    return
+  }
+  if (command === 'properties') {
+    openProperties(file)
+    return
+  }
+  if (command === 'toggle-hidden') {
+    await toggleFileHidden(file)
+    return
+  }
+  await deleteFile(file)
+}
+
+function handleActiveFileAction(command: FileActionCommand) {
+  if (!activeActionFile.value) {
+    return
+  }
+  void handleFileAction(activeActionFile.value, command)
+}
+
+function handlePathAction(command: unknown) {
+  if (!isPathActionCommand(command)) {
+    return
+  }
+
+  if (command === 'create-folder') {
+    void openCreateFolder()
+    return
+  }
+  if (command === 'create-document') {
+    void openCreateDocument()
+    return
+  }
+  if (command === 'edit-path') {
+    openEditPath()
+    return
+  }
+  if (command === 'move-path') {
+    void openMovePath()
+    return
+  }
+  void deleteCurrentPath()
+}
+
+function clearFilters() {
+  fileTypeFilter.value = []
+  tagFilter.value = []
+}
+
+async function openMoveSelectedFilesFromDrawer() {
+  batchActionsDrawerVisible.value = false
+  await openMoveSelectedFiles()
+}
+
+async function exportSelectedFilesFromDrawer() {
+  batchActionsDrawerVisible.value = false
+  await exportSelectedFiles()
+}
+
+function openMergeSelectedDocumentsFromDrawer() {
+  batchActionsDrawerVisible.value = false
+  openMergeSelectedDocuments()
 }
 
 function openCurrentImageProperties() {
@@ -963,7 +1108,20 @@ watch(
   { flush: 'post' }
 )
 
+watch(fileActionsDrawerVisible, (visible) => {
+  if (!visible) {
+    activeActionFile.value = null
+  }
+})
+
+onMounted(() => {
+  mobileMediaQuery = window.matchMedia(MOBILE_QUERY)
+  handleViewportChange(mobileMediaQuery)
+  mobileMediaQuery.addEventListener('change', handleViewportChange)
+})
+
 onBeforeUnmount(() => {
+  mobileMediaQuery?.removeEventListener('change', handleViewportChange)
   clearImagePreviewUrls()
   closeVideoPreview()
 })
@@ -977,14 +1135,40 @@ onBeforeUnmount(() => {
         <p>{{ selectedPath.full_path }}</p>
       </div>
       <div class="folder-view__actions">
-        <el-button :icon="FolderAdd" @click="openCreateFolder">新建目录</el-button>
-        <el-button :icon="DocumentAdd" @click="openCreateDocument">新建文档</el-button>
-        <el-button :icon="Edit" :disabled="currentPathIsRoot" @click="openEditPath">编辑目录</el-button>
-        <el-button :icon="Rank" :disabled="currentPathIsRoot" @click="openMovePath">移动目录</el-button>
-        <el-button type="danger" plain :icon="FolderDelete" :disabled="currentPathIsRoot" @click="deleteCurrentPath">
-          删除目录
-        </el-button>
+        <template v-if="!isMobileViewport">
+          <el-button :icon="FolderAdd" @click="openCreateFolder">新建目录</el-button>
+          <el-button :icon="DocumentAdd" @click="openCreateDocument">新建文档</el-button>
+        </template>
         <el-button type="primary" :icon="UploadFilled" @click="openUploadDialog">上传</el-button>
+        <el-dropdown trigger="click" @command="handlePathAction">
+          <el-button v-if="isMobileViewport" :icon="MoreFilled" circle aria-label="更多目录操作" />
+          <el-button v-else :icon="Operation">
+            目录操作
+            <el-icon class="folder-view__dropdown-icon"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <template v-if="isMobileViewport">
+                <el-dropdown-item command="create-folder" :icon="FolderAdd">新建目录</el-dropdown-item>
+                <el-dropdown-item command="create-document" :icon="DocumentAdd">新建文档</el-dropdown-item>
+              </template>
+              <el-dropdown-item
+                command="edit-path"
+                :icon="Edit"
+                :disabled="currentPathIsRoot"
+                :divided="isMobileViewport"
+              >
+                编辑目录
+              </el-dropdown-item>
+              <el-dropdown-item command="move-path" :icon="Rank" :disabled="currentPathIsRoot">
+                移动目录
+              </el-dropdown-item>
+              <el-dropdown-item command="delete-path" :icon="FolderDelete" :disabled="currentPathIsRoot" divided>
+                删除目录
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
@@ -992,44 +1176,77 @@ onBeforeUnmount(() => {
       <div class="panel-header">
         <h2>文件列表</h2>
         <div class="folder-view__toolbar">
-          <el-input v-model="fileKeyword" clearable placeholder="筛选文件名、备注、摘要" class="folder-view__filter" />
-          <el-select v-model="fileTypeFilter" multiple clearable collapse-tags placeholder="类型筛选" class="folder-view__filter">
-            <el-option v-for="option in fileTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
-          </el-select>
-          <el-select v-model="tagFilter" multiple clearable collapse-tags placeholder="标签筛选" class="folder-view__filter">
-            <el-option v-for="tagName in tagOptions" :key="tagName" :label="tagName" :value="tagName" />
-          </el-select>
-          <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFiles">
-            移动所选
-          </el-button>
-          <el-button :icon="Download" :disabled="!selectedFiles.length" :loading="exportFilesLoading" @click="exportSelectedFiles">
-            导出所选
-          </el-button>
-          <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
-            合并文档
-          </el-button>
-          <el-button :icon="Refresh" :loading="loading" @click="loadFiles">刷新</el-button>
+          <el-input
+            v-model="fileKeyword"
+            clearable
+            placeholder="筛选文件名、备注、摘要"
+            class="folder-view__filter folder-view__filter--search"
+          />
+          <template v-if="!isMobileViewport">
+            <el-select
+              v-model="fileTypeFilter"
+              multiple
+              clearable
+              collapse-tags
+              placeholder="类型筛选"
+              class="folder-view__filter"
+            >
+              <el-option v-for="option in fileTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
+            <el-select
+              v-model="tagFilter"
+              multiple
+              clearable
+              collapse-tags
+              placeholder="标签筛选"
+              class="folder-view__filter"
+            >
+              <el-option v-for="tagName in tagOptions" :key="tagName" :label="tagName" :value="tagName" />
+            </el-select>
+            <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFiles">
+              移动所选
+            </el-button>
+            <el-button :icon="Download" :disabled="!selectedFiles.length" :loading="exportFilesLoading" @click="exportSelectedFiles">
+              导出所选
+            </el-button>
+            <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
+              合并文档
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button :icon="Filter" @click="filterDrawerVisible = true">筛选</el-button>
+            <el-button :icon="Operation" :disabled="!selectedFiles.length" @click="batchActionsDrawerVisible = true">
+              已选 {{ selectedFiles.length }}
+            </el-button>
+          </template>
+          <el-button v-if="isMobileViewport" :icon="Refresh" circle :loading="loading" aria-label="刷新文件列表" @click="loadFiles" />
+          <el-button v-else :icon="Refresh" :loading="loading" @click="loadFiles">刷新</el-button>
           <el-segmented v-model="viewMode" :options="viewModeOptions" />
         </div>
       </div>
       <div v-loading="loading" class="panel-body">
         <el-table
-          v-if="viewMode === 'list'"
+          v-if="viewMode === 'list' && !isMobileViewport"
           ref="fileTableRef"
           :data="filteredFiles"
+          class="folder-view__table"
           border
           row-key="file_id"
           empty-text="当前目录暂无文件"
           @selection-change="handleSelectionChange"
         >
           <el-table-column type="selection" width="46" reserve-selection />
-          <el-table-column label="真实文件名" min-width="220">
+          <el-table-column label="文件名" min-width="280">
             <template #default="{ row }">
-              <span class="folder-view__file-name">
+              <button
+                class="folder-view__file-name"
+                type="button"
+                :aria-label="`查看${row.original_name}`"
+                @click="openFileDetail(row)"
+              >
                 <strong>{{ row.original_name }}</strong>
-                <small v-if="row.remark">{{ row.remark }}</small>
                 <small v-if="row.tags?.length">{{ tagNames(row) }}</small>
-              </span>
+              </button>
             </template>
           </el-table-column>
           <el-table-column v-if="settingsStore.showHiddenContent" label="状态" width="90">
@@ -1044,26 +1261,72 @@ onBeforeUnmount(() => {
           <el-table-column label="更新时间" width="180">
             <template #default="{ row }">{{ formatDateTime(row.updated_at ?? row.created_at) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="320" fixed="right">
+          <el-table-column label="操作" width="84" fixed="right" align="center">
             <template #default="{ row }">
-              <el-button link type="primary" :icon="View" :disabled="!canOpenPreview(row)" @click="openFileDetail(row)">
-                查看
-              </el-button>
-              <el-button link :icon="Download" @click="exportSingleFile(row)">
-                导出
-              </el-button>
-              <el-button link :icon="InfoFilled" @click="openProperties(row)">
-                属性
-              </el-button>
-              <el-button link :icon="View" @click="toggleFileHidden(row)">
-                {{ row.is_hidden ? '显示' : '隐藏' }}
-              </el-button>
-              <el-button link type="danger" :icon="Delete" @click="deleteFile(row)">
-                删除
-              </el-button>
+              <el-dropdown trigger="click" @command="handleFileAction(row, $event)">
+                <el-button
+                  class="folder-view__more-button"
+                  text
+                  circle
+                  :icon="MoreFilled"
+                  :aria-label="`${row.original_name}的更多操作`"
+                />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="action in fileActionItems(row)"
+                      :key="action.command"
+                      :command="action.command"
+                      :icon="action.icon"
+                      :class="{ 'folder-view__danger-action': action.danger }"
+                    >
+                      {{ action.label }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>
+        <div v-else-if="viewMode === 'list' && filteredFiles.length" class="folder-view__mobile-list" aria-label="手机端文件列表">
+          <article
+            v-for="file in filteredFiles"
+            :key="file.file_id"
+            class="file-row"
+            :class="{ 'file-row--selected': isFileSelected(file) }"
+          >
+            <el-checkbox
+              class="file-row__select"
+              :model-value="isFileSelected(file)"
+              :aria-label="`选择${file.original_name}`"
+              @change="(value: string | number | boolean) => toggleGridFileSelection(file, Boolean(value))"
+            />
+            <button class="file-row__icon" type="button" :aria-label="`查看${file.original_name}`" @click="openFileDetail(file)">
+              {{ fileTypeText(file.file_type).slice(0, 1) }}
+            </button>
+            <button class="file-row__content" type="button" :aria-label="`查看${file.original_name}`" @click="openFileDetail(file)">
+              <span class="file-row__title">
+                <strong>{{ file.original_name }}</strong>
+                <el-tag v-if="settingsStore.showHiddenContent && file.is_hidden" size="small" type="warning">隐藏</el-tag>
+              </span>
+              <span class="file-row__meta">
+                {{ fileTypeText(file.file_type) }} · {{ formatFileSize(file.size_bytes) }} ·
+                {{ formatDateTime(file.updated_at ?? file.created_at) }}
+              </span>
+              <small v-if="file.remark || file.tags?.length">
+                {{ file.remark || tagNames(file) }}
+              </small>
+            </button>
+            <el-button
+              class="file-row__more"
+              text
+              circle
+              :icon="MoreFilled"
+              :aria-label="`${file.original_name}的更多操作`"
+              @click="openFileActions(file)"
+            />
+          </article>
+        </div>
         <div v-else-if="filteredFiles.length" class="folder-view__grid" aria-label="图标视图文件列表">
           <article
             v-for="file in filteredFiles"
@@ -1078,30 +1341,119 @@ onBeforeUnmount(() => {
                 :aria-label="`选择${file.original_name}`"
                 @change="(value: string | number | boolean) => toggleGridFileSelection(file, Boolean(value))"
               />
-              <el-tag v-if="settingsStore.showHiddenContent && file.is_hidden" size="small" type="warning">隐藏</el-tag>
+              <el-tag v-if="settingsStore.showHiddenContent && file.is_hidden" class="file-card__hidden-tag" size="small" type="warning">
+                隐藏
+              </el-tag>
+              <el-button
+                v-if="isMobileViewport"
+                class="file-card__more"
+                text
+                circle
+                :icon="MoreFilled"
+                :aria-label="`${file.original_name}的更多操作`"
+                @click="openFileActions(file)"
+              />
+              <el-dropdown v-else trigger="click" @command="handleFileAction(file, $event)">
+                <el-button
+                  class="file-card__more"
+                  text
+                  circle
+                  :icon="MoreFilled"
+                  :aria-label="`${file.original_name}的更多操作`"
+                />
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="action in fileActionItems(file)"
+                      :key="action.command"
+                      :command="action.command"
+                      :icon="action.icon"
+                      :class="{ 'folder-view__danger-action': action.danger }"
+                    >
+                      {{ action.label }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </div>
-            <button class="file-card__main" type="button" :disabled="!canOpenPreview(file)" @click="openFileDetail(file)">
+            <button class="file-card__main" type="button" :aria-label="`查看${file.original_name}`" @click="openFileDetail(file)">
               <span class="file-card__icon">{{ fileTypeText(file.file_type).slice(0, 1) }}</span>
               <strong>{{ file.original_name }}</strong>
               <small>{{ fileTypeText(file.file_type) }} · {{ formatFileSize(file.size_bytes) }}</small>
               <small v-if="file.tags?.length">{{ tagNames(file) }}</small>
             </button>
-            <div class="file-card__actions">
-              <el-button link type="primary" :icon="View" :disabled="!canOpenPreview(file)" @click="openFileDetail(file)">
-                查看
-              </el-button>
-              <el-button link :icon="Download" @click="exportSingleFile(file)">导出</el-button>
-              <el-button link :icon="InfoFilled" @click="openProperties(file)">属性</el-button>
-              <el-button link :icon="View" @click="toggleFileHidden(file)">
-                {{ file.is_hidden ? '显示' : '隐藏' }}
-              </el-button>
-              <el-button link type="danger" :icon="Delete" @click="deleteFile(file)">删除</el-button>
-            </div>
           </article>
         </div>
         <el-empty v-else description="当前目录暂无文件" />
       </div>
     </section>
+
+    <el-drawer v-model="filterDrawerVisible" title="筛选文件" direction="btt" size="min(72vh, 420px)" class="folder-view__drawer">
+      <div class="folder-view__drawer-form">
+        <el-form label-position="top">
+          <el-form-item label="文件类型">
+            <el-select v-model="fileTypeFilter" multiple clearable collapse-tags placeholder="类型筛选" class="folder-view__path-select">
+              <el-option v-for="option in fileTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="标签">
+            <el-select v-model="tagFilter" multiple clearable collapse-tags placeholder="标签筛选" class="folder-view__path-select">
+              <el-option v-for="tagName in tagOptions" :key="tagName" :label="tagName" :value="tagName" />
+            </el-select>
+          </el-form-item>
+        </el-form>
+        <div class="folder-view__drawer-footer">
+          <el-button @click="clearFilters">清空筛选</el-button>
+          <el-button type="primary" @click="filterDrawerVisible = false">完成</el-button>
+        </div>
+      </div>
+    </el-drawer>
+
+    <el-drawer
+      v-model="batchActionsDrawerVisible"
+      title="所选文件操作"
+      direction="btt"
+      size="min(72vh, 380px)"
+      class="folder-view__drawer"
+    >
+      <div class="folder-view__sheet">
+        <p class="folder-view__sheet-summary">已选择 {{ selectedFiles.length }} 个文件</p>
+        <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFilesFromDrawer">移动所选</el-button>
+        <el-button
+          :icon="Download"
+          :disabled="!selectedFiles.length"
+          :loading="exportFilesLoading"
+          @click="exportSelectedFilesFromDrawer"
+        >
+          导出所选
+        </el-button>
+        <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocumentsFromDrawer">
+          合并文档
+        </el-button>
+      </div>
+    </el-drawer>
+
+    <el-drawer
+      v-model="fileActionsDrawerVisible"
+      :title="activeActionFile?.original_name || '文件操作'"
+      direction="btt"
+      size="min(72vh, 360px)"
+      class="folder-view__drawer"
+    >
+      <div class="folder-view__sheet">
+        <button
+          v-for="action in activeFileActions"
+          :key="action.command"
+          type="button"
+          class="folder-view__sheet-action"
+          :class="{ 'folder-view__sheet-action--danger': action.danger }"
+          @click="handleActiveFileAction(action.command)"
+        >
+          <el-icon><component :is="action.icon" /></el-icon>
+          <span>{{ action.label }}</span>
+        </button>
+      </div>
+    </el-drawer>
 
     <FilePropertiesDialog
       v-model="propertiesVisible"
@@ -1382,9 +1734,14 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.folder-view__dropdown-icon {
+  margin-left: 4px;
+}
+
 .folder-view__toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 10px;
 }
@@ -1393,10 +1750,29 @@ onBeforeUnmount(() => {
   width: 210px;
 }
 
+.folder-view__filter--search {
+  width: 260px;
+}
+
+.folder-view__table :deep(.el-table__cell) {
+  vertical-align: middle;
+}
+
 .folder-view__file-name {
   display: grid;
+  width: 100%;
   gap: 4px;
   min-width: 0;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.folder-view__file-name:hover strong {
+  color: var(--pfmt-primary);
 }
 
 .folder-view__file-name strong {
@@ -1410,6 +1786,106 @@ onBeforeUnmount(() => {
   color: var(--pfmt-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.folder-view__more-button {
+  width: 36px;
+  height: 36px;
+}
+
+.folder-view__mobile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.file-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 32px 42px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  background: #fff;
+  border: 1px solid var(--pfmt-border-soft);
+  border-radius: 8px;
+}
+
+.file-row--selected {
+  border-color: #409eff;
+  box-shadow: 0 0 0 2px rgb(64 158 255 / 12%);
+}
+
+.file-row__select {
+  display: grid;
+  width: 32px;
+  height: 40px;
+  align-items: center;
+  justify-items: center;
+}
+
+.file-row__icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-items: center;
+  color: #1f2937;
+  background: #f3f6fb;
+  border: 1px solid var(--pfmt-border);
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.file-row__content {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.file-row__title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.file-row__title strong {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.file-row__title .el-tag {
+  flex: 0 0 auto;
+}
+
+.file-row__meta,
+.file-row__content small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--pfmt-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-row__more {
+  width: 40px;
+  height: 40px;
 }
 
 .folder-view__grid {
@@ -1435,12 +1911,21 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 2px rgb(64 158 255 / 14%);
 }
 
-.file-card__top,
-.file-card__actions {
+.file-card__top {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.file-card__hidden-tag {
+  margin-left: auto;
+}
+
+.file-card__more {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
 }
 
 .file-card__main {
@@ -1487,13 +1972,112 @@ onBeforeUnmount(() => {
   color: var(--pfmt-text-muted);
 }
 
-.file-card__actions {
-  flex-wrap: wrap;
-  justify-content: center;
-}
-
 .folder-view__path-select {
   width: 100%;
+}
+
+.folder-view__drawer :deep(.el-drawer__body) {
+  padding-top: 0;
+}
+
+.folder-view__drawer-form {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-view__drawer-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.folder-view__sheet {
+  display: grid;
+  gap: 10px;
+}
+
+.folder-view__sheet-summary {
+  margin: 0 0 4px;
+  color: var(--pfmt-text-muted);
+  line-height: 1.5;
+}
+
+.folder-view__sheet > .el-button {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 42px;
+  margin-left: 0;
+}
+
+.folder-view__sheet-action {
+  display: grid;
+  width: 100%;
+  min-height: 44px;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+  color: var(--pfmt-text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.folder-view__sheet-action span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-view__sheet-action--danger,
+.folder-view__danger-action {
+  color: var(--pfmt-danger);
+}
+
+@media (max-width: 820px) {
+  .folder-view__actions {
+    align-items: center;
+    justify-content: flex-start;
+    margin-top: 12px;
+  }
+
+  .folder-view :deep(.panel-header) {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .folder-view__toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    justify-content: stretch;
+    gap: 8px;
+  }
+
+  .folder-view__filter--search,
+  .folder-view__toolbar .el-segmented {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .folder-view__toolbar > .el-button {
+    min-width: 40px;
+  }
+
+  .folder-view :deep(.panel-body) {
+    padding: 12px;
+  }
+
+  .folder-view__grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+
+  .file-card {
+    min-height: 190px;
+    padding: 10px;
+  }
 }
 
 .image-viewer {
