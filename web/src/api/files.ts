@@ -7,6 +7,7 @@ import type {
   FileBatchDeletePayload,
   DocumentSavePayload,
   FileDetail,
+  FileEmbedToken,
   FileInfo,
   FilePreviewToken,
   FileSearchResponse,
@@ -104,6 +105,9 @@ export const filesApi = {
   },
   issuePreviewToken(fileId: string, _showHidden?: boolean) {
     return http.post<FilePreviewToken>(`/files/${encodeURIComponent(fileId)}/preview-token`)
+  },
+  issueEmbedToken(fileId: string, _showHidden?: boolean) {
+    return http.post<FileEmbedToken>(`/files/${encodeURIComponent(fileId)}/embed-token`)
   },
   getDocument(fileId: string, _showHidden?: boolean) {
     return http.get<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`)

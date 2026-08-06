@@ -133,3 +133,13 @@ describe('text beautify utils', () => {
     })
   })
 })
+
+
+describe('text beautify keeps document embed references', () => {
+  it('does not break stream reference lines in markdown', () => {
+    const source = '![示意图](/api/files/file_abc/stream)\n\n# 标题\n'
+    const result = beautifyText(source, 'markdown')
+    expect(result).toContain('/api/files/file_abc/stream')
+    expect(result).toContain('# 标题')
+  })
+})

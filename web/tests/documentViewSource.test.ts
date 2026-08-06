@@ -32,7 +32,7 @@ describe('DocumentView source contract', () => {
 
   it('serializes rich editor content back to markdown instead of plain text', () => {
     expect(source).toContain('serializeMarkdownDocument')
-    expect(source).toContain('serializeMarkdownBlock')
+    expect(source).toContain('@/utils/documentMarkdown')
     expect(source).toContain("currentDocument.document_format === 'markdown'")
     expect(source).not.toContain("currentDocument.document_format === 'markdown') {\n      return editor.value?.getText()")
   })
@@ -44,6 +44,19 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('min-height: 62vh')
     expect(source).toContain('font-family: ui-monospace')
     expect(source).toContain('resize: none')
+  })
+
+  it('supports rich text toolbar with images attachments and tables', () => {
+    expect(source).toContain("@tiptap/extension-image")
+    expect(source).toContain("TableKit")
+    expect(source).toContain("DocumentEmbedDialog")
+    expect(source).toContain("插入图片")
+    expect(source).toContain("插入附件")
+    expect(source).toContain("插入表格")
+    expect(source).toContain("resolveEmbedUrls")
+    expect(source).toContain("stripEmbedTokens")
+    expect(source).toContain("serializeMarkdownDocument")
+    expect(source).toContain("ensureAttachmentFolder")
   })
 
   it('keeps the beautify/cleanup feature wired into the document page', () => {

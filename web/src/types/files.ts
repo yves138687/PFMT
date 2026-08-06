@@ -102,6 +102,12 @@ export interface FilePreviewToken {
   expires_at: string
 }
 
+export interface FileEmbedToken {
+  file_id: string
+  url: string
+  expires_at: string
+}
+
 export interface DocumentContent {
   file_id: string
   original_name: string

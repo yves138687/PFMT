@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     admin_display_name: str = "管理员"
     file_master_key: str | None = None
     upload_chunk_size: int = 1024 * 1024
-    markdown_read_max_bytes: int = 5 * 1024 * 1024
+    embed_token_minutes: int = 30
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     file_encryption_enabled: bool = True
     hidden_feature_enabled: bool = True

@@ -3,14 +3,39 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
+import Image from '@tiptap/extension-image'
+import { TableKit } from '@tiptap/extension-table'
+import type { EditorView } from '@tiptap/pm/view'
+import type { Slice } from '@tiptap/pm/model'
+import { TextSelection } from '@tiptap/pm/state'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Download, MagicStick, Refresh, Switch, UploadFilled } from '@element-plus/icons-vue'
+import {
+  ArrowLeft,
+  Download,
+  Grid,
+  Link,
+  List,
+  MagicStick,
+  Minus,
+  Paperclip,
+  Picture,
+  Plus,
+  Refresh,
+  RefreshLeft,
+  RefreshRight,
+  Remove,
+  Switch,
+  UploadFilled
+} from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { filesApi } from '@/api/files'
+import DocumentEmbedDialog from '@/components/DocumentEmbedDialog.vue'
 import DocumentOutline from '@/components/DocumentOutline.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { DocumentContent, DocumentFormat } from '@/types/files'
+import { ensureAttachmentFolder } from '@/utils/documentAttachments'
+import { serializeMarkdownDocument, type ProseMirrorNode } from '@/utils/documentMarkdown'
 import {
   addOutlineIdsToHtml,
   applyOutlineIdsToContainer,
@@ -19,17 +44,11 @@ import {
   buildMarkdownOutline
 } from '@/utils/documentOutline'
 import { saveBlobResponse } from '@/utils/download'
+import { getEmbedToken, resolveEmbedUrls, stripEmbedTokens } from '@/utils/embedFiles'
 import { renderMarkdown } from '@/utils/markdown'
 import { beautifyText } from '@/utils/textBeautify'
 
 type DocumentMode = 'read' | 'edit' | 'source'
-type ProseMirrorNode = {
-  type?: string
-  text?: string
-  attrs?: Record<string, unknown>
-  marks?: Array<{ type?: string; attrs?: Record<string, unknown> }>
-  content?: ProseMirrorNode[]
-}
 
 const route = useRoute()
 const router = useRouter()
@@ -43,9 +62,13 @@ const converting = ref(false)
 const exporting = ref(false)
 const convertVisible = ref(false)
 const editorVersion = ref(0)
+const toolbarVersion = ref(0)
 const activeOutlineId = ref('')
 const canvasRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
+const safeRenderedHtml = ref('')
+const embedDialogVisible = ref(false)
+const embedDialogMode = ref<'image' | 'file'>('image')
 const headingSelector = 'h1, h2, h3, h4, h5, h6'
 const convertForm = ref<{ target_format: DocumentFormat; target_name: string }>({
   target_format: 'html',
@@ -57,7 +80,6 @@ const fromPathId = computed(() => {
   const pathId = route.query.pathId
   return typeof pathId === 'string' ? pathId : undefined
 })
-const safeRenderedHtml = computed(() => addOutlineIdsToHtml(DOMPurify.sanitize(documentContent.value?.rendered_html || '')))
 const documentFormatText = computed(() => {
   const format = documentContent.value?.document_format
   if (format === 'markdown') {
@@ -68,6 +90,7 @@ const documentFormatText = computed(() => {
   }
   return '纯文本'
 })
+const showToolbar = computed(() => mode.value === 'edit' && documentContent.value?.document_format !== 'plain_text')
 const outlineItems = computed(() => {
   const currentDocument = documentContent.value
   if (!currentDocument || currentDocument.document_format === 'plain_text') {
@@ -90,13 +113,73 @@ const outlineItems = computed(() => {
 })
 const showOutline = computed(() => documentContent.value?.document_format !== 'plain_text')
 
+const toolbarActive = computed(() => {
+  toolbarVersion.value
+  const editorInstance = editor.value
+  if (!editorInstance) {
+    return {
+      bold: false,
+      italic: false,
+      strike: false,
+      code: false,
+      bulletList: false,
+      orderedList: false,
+      blockquote: false,
+      codeBlock: false,
+      link: false,
+      table: false
+    }
+  }
+  return {
+    bold: editorInstance.isActive('bold'),
+    italic: editorInstance.isActive('italic'),
+    strike: editorInstance.isActive('strike'),
+    code: editorInstance.isActive('code'),
+    bulletList: editorInstance.isActive('bulletList'),
+    orderedList: editorInstance.isActive('orderedList'),
+    blockquote: editorInstance.isActive('blockquote'),
+    codeBlock: editorInstance.isActive('codeBlock'),
+    link: editorInstance.isActive('link'),
+    table: editorInstance.isActive('table')
+  }
+})
+
+const headingLevel = computed({
+  get: () => {
+    toolbarVersion.value
+    if (!editor.value?.isActive('heading')) {
+      return 0
+    }
+    const attrs = editor.value.getAttributes('heading') as { level?: number }
+    return Number(attrs.level ?? 1)
+  },
+  set: (level: number) => {
+    if (level === 0) {
+      editor.value?.chain().focus().setParagraph().run()
+    } else {
+      editor.value?.chain().focus().toggleHeading({ level: level as 1 | 2 | 3 | 4 | 5 | 6 }).run()
+    }
+  }
+})
+
 const editor = useEditor({
-  extensions: [StarterKit],
+  extensions: [StarterKit, Image, TableKit],
   editable: true,
   content: '',
+  editorProps: {
+    handlePaste: handlePasteImages,
+    handleDrop: handleDropImages
+  },
+  onCreate() {
+    toolbarVersion.value += 1
+  },
   onUpdate() {
     editorVersion.value += 1
+    toolbarVersion.value += 1
     void nextTick(applyEditorOutlineIds)
+  },
+  onSelectionUpdate() {
+    toolbarVersion.value += 1
   }
 })
 
@@ -115,31 +198,15 @@ function setMode(nextMode: DocumentMode) {
   }
   mode.value = nextMode
   if (nextMode === 'edit') {
-    editor.value?.commands.setContent(editorHtmlFromSource())
-    editorVersion.value += 1
-    void nextTick(applyEditorOutlineIds)
+    void setEditorContentFromSource()
+  }
+  if (nextMode === 'read') {
+    void refreshRenderedHtml()
   }
   if (nextMode === 'source') {
     void nextTick(resizeSourceTextarea)
   }
   activeOutlineId.value = outlineItems.value[0]?.id ?? ''
-}
-
-function editorHtmlFromSource() {
-  const currentDocument = documentContent.value
-  if (!currentDocument) {
-    return ''
-  }
-  if (currentDocument.document_format === 'markdown') {
-    return renderMarkdown(sourceContent.value)
-  }
-  if (currentDocument.document_format === 'html') {
-    return sourceContent.value
-  }
-  return sourceContent.value
-    .split(/\r?\n/)
-    .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
-    .join('')
 }
 
 function escapeHtml(value: string) {
@@ -157,10 +224,54 @@ function handleModeChange(value: string | number | boolean | undefined) {
   }
 }
 
+async function setEditorContentFromSource() {
+  const currentDocument = documentContent.value
+  if (!currentDocument) {
+    return
+  }
+  let html = ''
+  if (currentDocument.document_format === 'markdown') {
+    html = renderMarkdown(sourceContent.value)
+  } else if (currentDocument.document_format === 'html') {
+    html = sourceContent.value
+  } else {
+    html = sourceContent.value
+      .split(/\r?\n/)
+      .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
+      .join('')
+  }
+  const resolved = await resolveEmbedUrls(html)
+  editor.value?.commands.setContent(resolved)
+  editorVersion.value += 1
+  await nextTick()
+  applyEditorOutlineIds()
+  resizeSourceTextarea()
+}
+
+async function refreshRenderedHtml() {
+  const currentDocument = documentContent.value
+  if (!currentDocument) {
+    safeRenderedHtml.value = ''
+    return
+  }
+  if (currentDocument.document_format === 'markdown') {
+    const rendered = renderMarkdown(currentDocument.content)
+    safeRenderedHtml.value = addOutlineIdsToHtml(await resolveEmbedUrls(rendered))
+    return
+  }
+  if (currentDocument.document_format === 'html') {
+    const rendered = DOMPurify.sanitize(currentDocument.rendered_html ?? currentDocument.content)
+    safeRenderedHtml.value = addOutlineIdsToHtml(await resolveEmbedUrls(rendered))
+    return
+  }
+  safeRenderedHtml.value = addOutlineIdsToHtml(DOMPurify.sanitize(currentDocument.rendered_html ?? ''))
+}
+
 async function loadDocument() {
   if (!fileId.value) {
     documentContent.value = null
     sourceContent.value = ''
+    safeRenderedHtml.value = ''
     return
   }
 
@@ -169,11 +280,9 @@ async function loadDocument() {
     const response = await filesApi.getDocument(fileId.value, settingsStore.showHiddenContent)
     documentContent.value = response
     sourceContent.value = response.content
-    editor.value?.commands.setContent(editorHtmlFromSource())
-    editorVersion.value += 1
     activeOutlineId.value = ''
-    await nextTick()
-    applyEditorOutlineIds()
+    await setEditorContentFromSource()
+    await refreshRenderedHtml()
     resizeSourceTextarea()
     activeOutlineId.value = outlineItems.value[0]?.id ?? ''
   } finally {
@@ -186,101 +295,21 @@ function currentSaveContent() {
   if (!currentDocument) {
     return ''
   }
+  let content = ''
   if (mode.value === 'source') {
-    return sourceContent.value
-  }
-  if (mode.value === 'edit') {
+    content = sourceContent.value
+  } else if (mode.value === 'edit') {
     if (currentDocument.document_format === 'html') {
-      return editor.value?.getHTML() ?? sourceContent.value
+      content = editor.value?.getHTML() ?? sourceContent.value
+    } else if (currentDocument.document_format === 'markdown') {
+      content = serializeMarkdownDocument(editor.value?.getJSON() as ProseMirrorNode | undefined) || sourceContent.value
+    } else {
+      content = editor.value?.getText() ?? sourceContent.value
     }
-    if (currentDocument.document_format === 'markdown') {
-      return serializeMarkdownDocument(editor.value?.getJSON() as ProseMirrorNode | undefined) || sourceContent.value
-    }
-    return editor.value?.getText() ?? sourceContent.value
+  } else {
+    content = sourceContent.value
   }
-  return sourceContent.value
-}
-
-function serializeMarkdownDocument(node: ProseMirrorNode | undefined): string {
-  if (!node?.content) {
-    return ''
-  }
-  return node.content.map((child) => serializeMarkdownBlock(child, 0)).join('\n\n').trimEnd()
-}
-
-function serializeMarkdownBlock(node: ProseMirrorNode, depth: number): string {
-  const children = node.content ?? []
-  if (node.type === 'heading') {
-    const level = Number(node.attrs?.level ?? 1)
-    return `${'#'.repeat(Math.min(Math.max(level, 1), 6))} ${serializeInline(children)}`
-  }
-  if (node.type === 'paragraph') {
-    return serializeInline(children)
-  }
-  if (node.type === 'bulletList') {
-    return children.map((child) => serializeListItem(child, depth, '-')).join('\n')
-  }
-  if (node.type === 'orderedList') {
-    return children.map((child, index) => serializeListItem(child, depth, `${index + 1}.`)).join('\n')
-  }
-  if (node.type === 'blockquote') {
-    return children
-      .map((child) => serializeMarkdownBlock(child, depth))
-      .join('\n')
-      .split('\n')
-      .map((line) => `> ${line}`)
-      .join('\n')
-  }
-  if (node.type === 'codeBlock') {
-    return `\`\`\`\n${serializeInline(children)}\n\`\`\``
-  }
-  if (node.type === 'horizontalRule') {
-    return '---'
-  }
-  return serializeInline(children)
-}
-
-function serializeListItem(node: ProseMirrorNode, depth: number, marker: string): string {
-  const indent = '  '.repeat(depth)
-  const blocks = node.content ?? []
-  const [firstBlock, ...restBlocks] = blocks
-  const firstLine = firstBlock ? serializeMarkdownBlock(firstBlock, depth + 1) : ''
-  const rest = restBlocks.map((child) => serializeMarkdownBlock(child, depth + 1)).filter(Boolean)
-  const first = `${indent}${marker} ${firstLine}`
-  return [first, ...rest.map((line) => `${indent}  ${line}`)].join('\n')
-}
-
-function serializeInline(nodes: ProseMirrorNode[]): string {
-  return nodes.map((node) => {
-    if (node.type === 'text') {
-      return applyMarkdownMarks(node.text ?? '', node.marks ?? [])
-    }
-    if (node.type === 'hardBreak') {
-      return '  \n'
-    }
-    return serializeInline(node.content ?? [])
-  }).join('')
-}
-
-function applyMarkdownMarks(text: string, marks: NonNullable<ProseMirrorNode['marks']>): string {
-  return marks.reduce((result, mark) => {
-    if (mark.type === 'bold') {
-      return `**${result}**`
-    }
-    if (mark.type === 'italic') {
-      return `*${result}*`
-    }
-    if (mark.type === 'code') {
-      return `\`${result}\``
-    }
-    if (mark.type === 'strike') {
-      return `~~${result}~~`
-    }
-    if (mark.type === 'link' && typeof mark.attrs?.href === 'string') {
-      return `[${result}](${mark.attrs.href})`
-    }
-    return result
-  }, text)
+  return stripEmbedTokens(content)
 }
 
 async function saveDocument() {
@@ -301,10 +330,8 @@ async function saveDocument() {
     )
     documentContent.value = response
     sourceContent.value = response.content
-    editor.value?.commands.setContent(editorHtmlFromSource())
-    editorVersion.value += 1
-    await nextTick()
-    applyEditorOutlineIds()
+    await setEditorContentFromSource()
+    await refreshRenderedHtml()
     resizeSourceTextarea()
     activeOutlineId.value = outlineItems.value[0]?.id ?? ''
     ElMessage.success('文档已保存')
@@ -363,10 +390,7 @@ async function beautifyDocument() {
 
   sourceContent.value = formatted
   if (mode.value === 'edit') {
-    editor.value?.commands.setContent(editorHtmlFromSource())
-    editorVersion.value += 1
-    await nextTick()
-    applyEditorOutlineIds()
+    await setEditorContentFromSource()
   } else {
     await nextTick()
     resizeSourceTextarea()
@@ -555,6 +579,166 @@ async function convertDocument() {
   }
 }
 
+function toggleMark(mark: 'bold' | 'italic' | 'strike' | 'code') {
+  const commands = editor.value?.chain().focus()
+  if (!commands) {
+    return
+  }
+  if (mark === 'bold') {
+    commands.toggleBold()
+  } else if (mark === 'italic') {
+    commands.toggleItalic()
+  } else if (mark === 'strike') {
+    commands.toggleStrike()
+  } else {
+    commands.toggleCode()
+  }
+  commands.run()
+}
+
+function toggleList(type: 'bulletList' | 'orderedList') {
+  const editorInstance = editor.value
+  if (!editorInstance) {
+    return
+  }
+  if (type === 'bulletList') {
+    editorInstance.chain().focus().toggleBulletList().run()
+  } else {
+    editorInstance.chain().focus().toggleOrderedList().run()
+  }
+}
+
+async function toggleLink() {
+  const editorInstance = editor.value
+  if (!editorInstance) {
+    return
+  }
+  const previousUrl = editorInstance.getAttributes('link').href as string | undefined
+  if (previousUrl) {
+    editorInstance.chain().focus().extendMarkRange('link').unsetLink().run()
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt('请输入链接地址', '插入链接', {
+      inputValue: 'https://',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消'
+    })
+    editorInstance.chain().focus().extendMarkRange('link').setLink({ href: value }).run()
+  } catch {
+    // 用户取消
+  }
+}
+
+function insertTable() {
+  editor.value?.chain().focus().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run()
+}
+
+function openImageDialog() {
+  embedDialogMode.value = 'image'
+  embedDialogVisible.value = true
+}
+
+function openFileDialog() {
+  embedDialogMode.value = 'file'
+  embedDialogVisible.value = true
+}
+
+function handleEmbedInsert(payload: { fileId: string; originalName: string; fileType: string }) {
+  void insertEmbed(payload.fileId, payload.originalName, payload.fileType)
+}
+
+async function insertEmbed(fileId: string, originalName: string, fileType: string) {
+  const currentDocument = documentContent.value
+  if (!currentDocument) {
+    return
+  }
+  const tokenUrl = await getEmbedToken(fileId)
+  const streamUrl = tokenUrl ?? `/api/files/${fileId}/stream`
+  const editorInstance = editor.value
+  if (!editorInstance) {
+    return
+  }
+  if (fileType === 'image') {
+    editorInstance.chain().focus().setImage({ src: streamUrl, alt: originalName }).run()
+  } else {
+    editorInstance.chain().focus().insertContent(`<a href="${streamUrl}">${escapeHtml(originalName)}</a>`).run()
+  }
+  editorVersion.value += 1
+  void nextTick(applyEditorOutlineIds)
+}
+
+function imageFilesFrom(data: DataTransfer | null): File[] {
+  if (!data) {
+    return []
+  }
+  const files: File[] = []
+  if (data.files) {
+    files.push(...Array.from(data.files).filter((file) => file.type.startsWith('image/')))
+  }
+  if (data.items) {
+    for (const item of Array.from(data.items)) {
+      if (item.kind === 'file') {
+        const file = item.getAsFile()
+        if (file && file.type.startsWith('image/')) {
+          files.push(file)
+        }
+      }
+    }
+  }
+  return files
+}
+
+function handlePasteImages(_view: EditorView, event: ClipboardEvent, _slice: Slice): boolean {
+  const files = imageFilesFrom(event.clipboardData)
+  if (files.length === 0) {
+    return false
+  }
+  void insertUploadedImages(files)
+  return true
+}
+
+function handleDropImages(view: EditorView, event: DragEvent, _slice: Slice, moved: boolean): boolean {
+  if (moved) {
+    return false
+  }
+  const files = imageFilesFrom(event.dataTransfer)
+  if (files.length === 0) {
+    return false
+  }
+  event.preventDefault()
+  const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY })
+  if (coordinates) {
+    view.dispatch(view.state.tr.setSelection(new TextSelection(view.state.doc.resolve(coordinates.pos))))
+    view.focus()
+  }
+  void insertUploadedImages(files)
+  return true
+}
+
+async function insertUploadedImages(files: File[]) {
+  const currentDocument = documentContent.value
+  if (!currentDocument || currentDocument.document_format === 'plain_text') {
+    return
+  }
+  try {
+    const attachmentPathId = await ensureAttachmentFolder(fromPathId.value ?? 'root', settingsStore.showHiddenContent)
+    for (const file of files) {
+      const uploaded = await filesApi.uploadFile({
+        file,
+        pathId: attachmentPathId,
+        encryptionEnabled: true,
+        conflictStrategy: 'rename'
+      })
+      insertEmbed(uploaded.file_id, uploaded.original_name, uploaded.file_type)
+    }
+    ElMessage.success(`已插入 ${files.length} 张图片`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '图片上传失败'
+    ElMessage.error(message)
+  }
+}
+
 watch(
   [fileId, () => settingsStore.showHiddenContent],
   () => {
@@ -611,6 +795,128 @@ onBeforeUnmount(() => {
         <span class="muted">统一文档打开</span>
       </div>
       <div v-loading="loading" class="panel-body document-view__body">
+        <div v-if="showToolbar" class="document-view__toolbar">
+          <el-select v-model="headingLevel" size="small" class="document-view__toolbar-heading" placeholder="标题">
+            <el-option label="正文" :value="0" />
+            <el-option v-for="level in [1, 2, 3, 4]" :key="level" :label="`标题 ${level}`" :value="level" />
+          </el-select>
+
+          <span class="document-view__toolbar-sep" />
+
+          <el-button-group>
+            <el-button
+              size="small"
+              :type="toolbarActive.bold ? 'primary' : 'default'"
+              title="加粗"
+              @click="toggleMark('bold')"
+            >
+              <b>B</b>
+            </el-button>
+            <el-button
+              size="small"
+              :type="toolbarActive.italic ? 'primary' : 'default'"
+              title="斜体"
+              @click="toggleMark('italic')"
+            >
+              <i>I</i>
+            </el-button>
+            <el-button
+              size="small"
+              :type="toolbarActive.strike ? 'primary' : 'default'"
+              title="删除线"
+              @click="toggleMark('strike')"
+            >
+              <s>S</s>
+            </el-button>
+            <el-button
+              size="small"
+              :type="toolbarActive.code ? 'primary' : 'default'"
+              title="行内代码"
+              @click="toggleMark('code')"
+            >
+              <code>&lt;/&gt;</code>
+            </el-button>
+          </el-button-group>
+
+          <span class="document-view__toolbar-sep" />
+
+          <el-button-group>
+            <el-button
+              size="small"
+              :type="toolbarActive.bulletList ? 'primary' : 'default'"
+              title="无序列表"
+              :icon="List"
+              @click="toggleList('bulletList')"
+            />
+            <el-button
+              size="small"
+              :type="toolbarActive.orderedList ? 'primary' : 'default'"
+              title="有序列表"
+              @click="toggleList('orderedList')"
+            >
+              1.
+            </el-button>
+          </el-button-group>
+
+          <span class="document-view__toolbar-sep" />
+
+          <el-button-group>
+            <el-button
+              size="small"
+              :type="toolbarActive.blockquote ? 'primary' : 'default'"
+              title="引用"
+              @click="editor?.chain().focus().toggleBlockquote().run()"
+            >
+              ❝
+            </el-button>
+            <el-button
+              size="small"
+              :type="toolbarActive.codeBlock ? 'primary' : 'default'"
+              title="代码块"
+              @click="editor?.chain().focus().toggleCodeBlock().run()"
+            >
+              &lt;/&gt;
+            </el-button>
+            <el-button
+              size="small"
+              :type="toolbarActive.link ? 'primary' : 'default'"
+              title="链接"
+              :icon="Link"
+              @click="toggleLink"
+            />
+            <el-button size="small" title="分割线" @click="editor?.chain().focus().setHorizontalRule().run()">—</el-button>
+          </el-button-group>
+
+          <span class="document-view__toolbar-sep" />
+
+          <el-button-group>
+            <el-button size="small" title="插入表格" :icon="Grid" @click="insertTable" />
+            <template v-if="toolbarActive.table">
+              <el-button size="small" title="上方插入行" :icon="Plus" @click="editor?.chain().focus().addRowBefore().run()" />
+              <el-button size="small" title="下方插入行" :icon="Plus" @click="editor?.chain().focus().addRowAfter().run()" />
+              <el-button size="small" title="左侧插入列" :icon="Plus" @click="editor?.chain().focus().addColumnBefore().run()" />
+              <el-button size="small" title="右侧插入列" :icon="Plus" @click="editor?.chain().focus().addColumnAfter().run()" />
+              <el-button size="small" title="删除当前行" :icon="Minus" @click="editor?.chain().focus().deleteRow().run()" />
+              <el-button size="small" title="删除当前列" :icon="Minus" @click="editor?.chain().focus().deleteColumn().run()" />
+              <el-button size="small" title="删除表格" :icon="Remove" @click="editor?.chain().focus().deleteTable().run()" />
+            </template>
+          </el-button-group>
+
+          <span class="document-view__toolbar-sep" />
+
+          <el-button-group>
+            <el-button size="small" title="插入图片" :icon="Picture" @click="openImageDialog" />
+            <el-button size="small" title="插入附件" :icon="Paperclip" @click="openFileDialog" />
+          </el-button-group>
+
+          <span class="document-view__toolbar-sep" />
+
+          <el-button-group>
+            <el-button size="small" title="撤销" :icon="RefreshLeft" @click="editor?.chain().focus().undo().run()" />
+            <el-button size="small" title="重做" :icon="RefreshRight" @click="editor?.chain().focus().redo().run()" />
+          </el-button-group>
+        </div>
+
         <div v-if="documentContent" class="document-view__workspace" :class="{ 'document-view__workspace--with-outline': showOutline }">
           <div
             ref="canvasRef"
@@ -657,6 +963,13 @@ onBeforeUnmount(() => {
         <el-button type="primary" :loading="converting" @click="convertDocument">生成新文件</el-button>
       </template>
     </el-dialog>
+
+    <DocumentEmbedDialog
+      v-model="embedDialogVisible"
+      :mode="embedDialogMode"
+      :parent-path-id="fromPathId ?? 'root'"
+      @insert="handleEmbedInsert"
+    />
   </section>
 </template>
 
@@ -677,6 +990,29 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-height: 68vh;
+}
+
+.document-view__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  background: #fff;
+  border: 1px solid var(--pfmt-border);
+  border-radius: 8px;
+}
+
+.document-view__toolbar-heading {
+  width: 104px;
+}
+
+.document-view__toolbar-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--pfmt-border);
+  margin: 0 2px;
 }
 
 .document-view__workspace {
@@ -736,6 +1072,21 @@ onBeforeUnmount(() => {
 .document-view__editor :deep(.ProseMirror) {
   min-height: calc(62vh - 36px);
   outline: none;
+}
+
+.document-view__editor :deep(img) {
+  max-width: 100%;
+}
+
+.document-view__editor :deep(table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.document-view__editor :deep(th),
+.document-view__editor :deep(td) {
+  border: 1px solid var(--pfmt-border);
+  padding: 6px 10px;
 }
 
 .document-view__source {

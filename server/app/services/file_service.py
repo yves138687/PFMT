@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import AuthenticationError, ConflictError, NotFoundError, PayloadTooLargeError, UnsupportedFileTypeError
+from app.core.exceptions import AuthenticationError, ConflictError, NotFoundError, UnsupportedFileTypeError
 from app.core.security import now_utc
 from app.models.file import FileInfo, FilePath, FileTag
 from app.models.user import UserAccount
@@ -32,6 +32,7 @@ from app.schemas.file import (
     FileBatchDeleteRequest,
     FileConflictStrategy,
     FileDetailResponse,
+    FileEmbedTokenResponse,
     FileExportRequest,
     FileListItem,
     FileMoveRequest,
@@ -152,6 +153,51 @@ class FileService:
             expires_at=expires_at,
         )
 
+    def issue_embed_token(
+        self,
+        *,
+        file_id: str,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileEmbedTokenResponse:
+        """签发短时效嵌入访问令牌，供文档内 <img>/<a> 无需登录头读取文件。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            show_hidden=show_hidden,
+            action_type="issue_embed_token",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        expires_at = now_utc() + timedelta(minutes=self.settings.embed_token_minutes)
+        payload: dict[str, Any] = {
+            "sub": current_user.user_id,
+            "sid": getattr(current_user, "_pfmt_session_id", None),
+            "fid": file_id,
+            "purpose": "embed",
+            "show_hidden": self._include_hidden_files(current_user=current_user),
+            "jti": uuid4().hex,
+            "exp": expires_at.replace(tzinfo=timezone.utc),
+            "iat": now_utc().replace(tzinfo=timezone.utc),
+        }
+        token = jwt.encode(payload, self.settings.effective_jwt_secret, algorithm=self.settings.jwt_algorithm)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="issue_embed_token",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"file_type": file_info.file_type, "show_hidden": payload["show_hidden"]},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return FileEmbedTokenResponse(
+            file_id=file_id,
+            url=f"/api/files/{file_id}/stream?token={token}",
+            expires_at=expires_at,
+        )
+
     def stream_video_content(
         self,
         *,
@@ -214,6 +260,42 @@ class FileService:
         )
         self.db.commit()
         return file_info, chunks, selected_range
+
+    def stream_embed_content(
+        self,
+        *,
+        file_id: str,
+        token: str,
+        client_ip: str | None,
+    ) -> tuple[FileInfo, Iterator[bytes]]:
+        """校验嵌入令牌后返回任意文件明文流，供文档内图片/附件引用。"""
+
+        payload = self._decode_preview_token(token=token, file_id=file_id, purpose="embed")
+        user_id = str(payload["sub"])
+        session_id = str(payload["sid"])
+        session = self.session_repository.get_active(session_id)
+        if session is None or session.user_id != user_id:
+            raise AuthenticationError("嵌入访问链接无效或已过期")
+        include_hidden = self.setting_service.get_bool("hidden.feature_enabled", True) and bool(session.show_hidden_enabled)
+        file_info, parent_path = self._get_visible_file_for_token(
+            file_id=file_id,
+            include_hidden=include_hidden,
+            user_id=user_id,
+            client_ip=client_ip,
+            action_type="stream_embed",
+        )
+        self.repository.mark_accessed(file_info)
+        self.audit_service.record(
+            user_id=user_id,
+            action_type="stream_embed",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"file_type": file_info.file_type, "size_bytes": file_info.size_bytes},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return file_info, self.storage_service.iter_content_chunks(file_info)
 
     async def upload_file(
         self,
@@ -470,7 +552,7 @@ class FileService:
             raise UnsupportedFileTypeError("仅支持 Markdown 文件读取")
 
         try:
-            content = self._read_text_content(file_info, too_large_message="Markdown 文件超过当前读取上限")
+            content = self._read_text_content(file_info)
             self.repository.mark_accessed(file_info)
             self.audit_service.record(
                 user_id=current_user.user_id,
@@ -535,7 +617,7 @@ class FileService:
             raise UnsupportedFileTypeError("当前文件类型暂不支持文档编辑")
 
         try:
-            content = self._read_text_content(file_info, too_large_message="文档超过当前读取上限")
+            content = self._read_text_content(file_info)
             self.repository.mark_accessed(file_info)
             self.audit_service.record(
                 user_id=current_user.user_id,
@@ -600,8 +682,6 @@ class FileService:
             raise UnsupportedFileTypeError("保存格式必须与当前文件格式一致")
 
         content_bytes = payload.content.encode("utf-8")
-        if len(content_bytes) > self.settings.markdown_read_max_bytes:
-            raise PayloadTooLargeError("文档超过当前保存上限")
         try:
             stored_object = self.storage_service.replace_file_content(file_info=file_info, content=content_bytes)
             self.repository.update_content_metadata(
@@ -674,7 +754,7 @@ class FileService:
             )
             raise UnsupportedFileTypeError("当前文件类型暂不支持转换")
 
-        source_content = self._read_text_content(file_info, too_large_message="文档超过当前转换上限")
+        source_content = self._read_text_content(file_info)
         converted_content = self._convert_document_content(source_content, source_format, payload.target_format)
         target_name = payload.target_name or self._default_converted_name(file_info.original_name, payload.target_format)
         target_ext = normalize_extension(target_name)
@@ -749,7 +829,7 @@ class FileService:
                     reason="unsupported_file_type",
                 )
                 raise UnsupportedFileTypeError("只能合并文本、Markdown 或 HTML 文档")
-            content = self._read_text_content(file_info, too_large_message="文档超过当前合并上限")
+            content = self._read_text_content(file_info)
             source_files.append((file_info, source_format, content))
             parent_path = parent_path or current_parent_path
 
@@ -835,7 +915,7 @@ class FileService:
             raise UnsupportedFileTypeError("仅支持纯文本文件读取")
 
         try:
-            content = self._read_text_content(file_info, too_large_message="文本文件超过当前读取上限")
+            content = self._read_text_content(file_info)
             self.repository.mark_accessed(file_info)
             self.audit_service.record(
                 user_id=current_user.user_id,
@@ -1564,19 +1644,19 @@ class FileService:
 
         return file_info, parent_path
 
-    def _decode_preview_token(self, *, token: str, file_id: str) -> dict[str, Any]:
+    def _decode_preview_token(self, *, token: str, file_id: str, purpose: str = "video_preview") -> dict[str, Any]:
         try:
             payload = jwt.decode(token, self.settings.effective_jwt_secret, algorithms=[self.settings.jwt_algorithm])
         except jwt.PyJWTError as exc:
-            raise AuthenticationError("视频预览链接无效或已过期") from exc
+            raise AuthenticationError("预览链接无效或已过期") from exc
 
         if (
-            payload.get("purpose") != "video_preview"
+            payload.get("purpose") != purpose
             or payload.get("fid") != file_id
             or not payload.get("sub")
             or not payload.get("sid")
         ):
-            raise AuthenticationError("视频预览链接无效或已过期")
+            raise AuthenticationError("预览链接无效或已过期")
         return payload
 
     def _get_visible_file_for_token(
@@ -1630,15 +1710,10 @@ class FileService:
             return None
         return value if value.strip() else None
 
-    def _read_text_content(self, file_info: FileInfo, *, too_large_message: str) -> str:
-        if file_info.size_bytes > self.settings.markdown_read_max_bytes:
-            raise PayloadTooLargeError(too_large_message)
-
+    def _read_text_content(self, file_info: FileInfo) -> str:
         content_bytes = bytearray()
         for chunk in self.storage_service.iter_content_chunks(file_info):
             content_bytes.extend(chunk)
-            if len(content_bytes) > self.settings.markdown_read_max_bytes:
-                raise PayloadTooLargeError(too_large_message)
 
         try:
             return bytes(content_bytes).decode("utf-8-sig")
@@ -1744,6 +1819,17 @@ class FileService:
         return content
 
     @staticmethod
+    def _is_safe_embed_src(src: str) -> bool:
+        """文档内嵌图片引用仅放行系统内部文件路径或 http(s) 链接。"""
+
+        lowered = src.lower()
+        if lowered.startswith("data:") or lowered.startswith("javascript:"):
+            return False
+        if lowered.startswith("/api/files/"):
+            return True
+        return lowered.startswith("http://") or lowered.startswith("https://")
+
+    @staticmethod
     def _render_document_html(content: str, document_format: str) -> str | None:
         if document_format == "html":
             return content
@@ -1759,6 +1845,17 @@ class FileService:
                     if in_list:
                         html_lines.append("</ul>")
                         in_list = False
+                    continue
+                image_match = re.match(r"^!\[([^\]]*)\]\(([^)\s]+)\)$", line)
+                if image_match:
+                    if in_list:
+                        html_lines.append("</ul>")
+                        in_list = False
+                    src = image_match.group(2)
+                    if FileService._is_safe_embed_src(src):
+                        html_lines.append(f'<p><img src="{src}" alt="{escape(image_match.group(1))}"></p>')
+                    else:
+                        html_lines.append(f"<p>{escape(line)}</p>")
                     continue
                 heading = re.match(r"^(#{1,6})\s+(.+)$", line)
                 if heading:

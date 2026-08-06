@@ -17,6 +17,7 @@ from app.schemas.file import (
     FileBatchDeleteRequest,
     FileConflictStrategy,
     FileDetailResponse,
+    FileEmbedTokenResponse,
     FileExportRequest,
     FileListItem,
     FileMoveRequest,
@@ -205,6 +206,25 @@ def issue_preview_token(
     )
 
 
+@router.post("/{file_id}/embed-token", response_model=FileEmbedTokenResponse)
+def issue_embed_token(
+    file_id: str,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileEmbedTokenResponse:
+    """签发短时效嵌入访问链接，供文档内图片/附件引用。"""
+
+    return FileService(db, settings).issue_embed_token(
+        file_id=file_id,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
 @router.get("/{file_id}/video-stream")
 def stream_video(
     file_id: str,
@@ -240,6 +260,34 @@ def stream_video(
     if selected_range:
         headers["Content-Range"] = f"bytes {selected_range.start}-{selected_range.end}/{file_info.size_bytes}"
     return StreamingResponse(chunks, status_code=status_code, media_type=media_type, headers=headers)
+
+
+@router.get("/{file_id}/stream")
+def stream_embed(
+    file_id: str,
+    token: str | None = Query(default=None),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> StreamingResponse:
+    """校验嵌入令牌后返回文件明文流，供文档内 <img>/<a> 引用。"""
+
+    if not token:
+        raise AuthenticationError("嵌入访问链接无效或已过期")
+    service = FileService(db, settings)
+    file_info, chunks = service.stream_embed_content(
+        file_id=file_id,
+        token=token,
+        client_ip=client_ip,
+    )
+    media_type = file_info.mime_type or "application/octet-stream"
+    quoted_name = quote(file_info.original_name)
+    disposition = "inline" if file_info.file_type in {"image", "pdf"} else "attachment"
+    return StreamingResponse(
+        chunks,
+        media_type=media_type,
+        headers={"Content-Disposition": f"{disposition}; filename*=UTF-8''{quoted_name}"},
+    )
 
 
 @router.post("/merge", response_model=FileDetailResponse, status_code=status.HTTP_201_CREATED)

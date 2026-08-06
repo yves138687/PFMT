@@ -162,7 +162,7 @@ class DocumentReadResponse(BaseModel):
 class DocumentSaveRequest(BaseModel):
     """保存当前文档内容，格式必须与文件当前格式一致。"""
 
-    content: str = Field(max_length=5 * 1024 * 1024)
+    content: str
     document_format: DocumentFormat
 
     @field_validator("document_format")
@@ -281,6 +281,14 @@ class FilePreviewTokenResponse(BaseModel):
 
     file_id: str
     preview_url: str
+    expires_at: datetime
+
+
+class FileEmbedTokenResponse(BaseModel):
+    """文档嵌入内容使用的短时效文件访问链接。"""
+
+    file_id: str
+    url: str
     expires_at: datetime
 
 

@@ -1253,3 +1253,183 @@ def test_non_text_file_rejects_text_read(
     read_response = client.get(f"/api/files/{file_id}/text", headers=auth_headers)
 
     assert read_response.status_code == 415
+
+
+def test_embed_token_streams_image_inline_and_file_attachment(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """嵌入访问令牌可流式返回任意文件：图片 inline，其他类型 attachment。"""
+
+    image_payload = b"fake-png-bytes"
+    image_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("pic.png", image_payload, "image/png")},
+    )
+    assert image_upload.status_code == 201
+    image_id = image_upload.json()["file_id"]
+
+    token_response = client.post(f"/api/files/{image_id}/embed-token", headers=auth_headers)
+    assert token_response.status_code == 200
+    body = token_response.json()
+    assert body["file_id"] == image_id
+    assert body["url"].startswith(f"/api/files/{image_id}/stream?token=")
+
+    stream_response = client.get(body["url"])
+    assert stream_response.status_code == 200
+    assert stream_response.content == image_payload
+    assert stream_response.headers["content-type"].startswith("image/png")
+    assert stream_response.headers["content-disposition"].startswith("inline")
+
+    zip_payload = b"PK\x05\x06fake"
+    zip_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("bundle.zip", zip_payload, "application/zip")},
+    )
+    assert zip_upload.status_code == 201
+    zip_id = zip_upload.json()["file_id"]
+
+    zip_token = client.post(f"/api/files/{zip_id}/embed-token", headers=auth_headers)
+    assert zip_token.status_code == 200
+    zip_stream = client.get(zip_token.json()["url"])
+    assert zip_stream.status_code == 200
+    assert zip_stream.content == zip_payload
+    assert zip_stream.headers["content-disposition"].startswith("attachment")
+
+
+def test_embed_stream_rejects_wrong_or_expired_token(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """嵌入流只接受 purpose=embed 的短时效令牌。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("note.txt", b"plain", "text/plain")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    assert client.get(f"/api/files/{file_id}/stream").status_code == 401
+
+    expired = jwt.encode(
+        {
+            "sub": "user_admin",
+            "fid": file_id,
+            "purpose": "embed",
+            "exp": (now_utc() - timedelta(minutes=1)).replace(tzinfo=timezone.utc),
+        },
+        get_settings().effective_jwt_secret,
+        algorithm=get_settings().jwt_algorithm,
+    )
+    assert client.get(f"/api/files/{file_id}/stream", params={"token": expired}).status_code == 401
+
+    wrong_purpose = jwt.encode(
+        {
+            "sub": "user_admin",
+            "fid": file_id,
+            "purpose": "video_preview",
+            "exp": (now_utc() + timedelta(minutes=5)).replace(tzinfo=timezone.utc),
+        },
+        get_settings().effective_jwt_secret,
+        algorithm=get_settings().jwt_algorithm,
+    )
+    assert client.get(f"/api/files/{file_id}/stream", params={"token": wrong_purpose}).status_code == 401
+
+
+def test_hidden_file_embed_token_respects_visibility_flag(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏文件默认不能签发嵌入令牌，开启会话隐藏展示后才可访问。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "is_hidden": "true"},
+        files={"file": ("hidden.png", b"hidden-png", "image/png")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    assert client.post(f"/api/files/{file_id}/embed-token", headers=auth_headers).status_code == 404
+    assert (
+        client.post(
+            f"/api/files/{file_id}/embed-token",
+            headers=auth_headers,
+            params={"show_hidden": "true"},
+        ).status_code
+        == 404
+    )
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    token_response = client.post(f"/api/files/{file_id}/embed-token", headers=auth_headers)
+    assert token_response.status_code == 200
+    stream_response = client.get(token_response.json()["url"])
+    assert stream_response.status_code == 200
+    assert stream_response.content == b"hidden-png"
+
+
+def test_markdown_document_render_keeps_image_and_blocks_dangerous_src(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """Markdown 渲染保留系统内图片引用，拒绝 javascript/data 等危险 src。"""
+
+    safe_id = "file_abc123"
+    content = (
+        f"# 标题\n\n![示意图](/api/files/{safe_id}/stream)\n\n"
+        "![bad](javascript:alert(1))\n\n"
+        "![bad2](data:text/html;base64,PHNjcmlwdD4=)"
+    )
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("note.md", content.encode("utf-8"), "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    document_response = client.get(f"/api/files/{file_id}/document", headers=auth_headers)
+    assert document_response.status_code == 200
+    rendered_html = document_response.json()["rendered_html"]
+
+    assert f'<img src="/api/files/{safe_id}/stream" alt="示意图">' in rendered_html
+    assert rendered_html.count("<img") == 1
+
+
+def test_document_save_allows_content_larger_than_5mb(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """文档读取/保存不再受 5MB 上限约束。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("big.md", b"start", "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    large_content = "# 大文档\n\n" + ("x" * (6 * 1024 * 1024))
+    save_response = client.put(
+        f"/api/files/{file_id}/document",
+        headers=auth_headers,
+        json={"document_format": "markdown", "content": large_content},
+    )
+    assert save_response.status_code == 200
+    assert save_response.json()["content"] == large_content
+
+    read_response = client.get(f"/api/files/{file_id}/document", headers=auth_headers)
+    assert read_response.status_code == 200
+    assert read_response.json()["content"] == large_content
