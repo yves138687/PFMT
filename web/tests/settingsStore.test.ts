@@ -8,7 +8,8 @@ import { useSettingsStore } from '@/stores/settingsStore'
 vi.mock('@/api/auth', () => ({
   authApi: {
     getHiddenContentSession: vi.fn(),
-    setHiddenContentSession: vi.fn()
+    setHiddenContentSession: vi.fn(),
+    changeHiddenContentPassword: vi.fn()
   }
 }))
 
@@ -28,6 +29,9 @@ describe('settings store', () => {
     vi.mocked(authApi.setHiddenContentSession).mockResolvedValue({
       show_hidden_enabled: true
     })
+    vi.mocked(authApi.changeHiddenContentPassword).mockResolvedValue({
+      configured: true
+    })
   })
 
   it('loads backend setting keys into view model fields', async () => {
@@ -36,6 +40,8 @@ describe('settings store', () => {
       encryptionEnabled: false,
       autoConvertTxtToMd: true,
       showHiddenDefault: true,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'D:/pfmt/storage',
       aiFeatureEnabled: false,
       aiProviders: [],
@@ -60,6 +66,8 @@ describe('settings store', () => {
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
       aiProviders: [],
@@ -68,7 +76,7 @@ describe('settings store', () => {
     })
 
     const store = useSettingsStore()
-    await store.setShowHiddenContent(true)
+    await store.setShowHiddenContent(true, 'secret-6')
     vi.mocked(authApi.getHiddenContentSession).mockResolvedValue({
       show_hidden_enabled: true
     })
@@ -83,6 +91,8 @@ describe('settings store', () => {
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
       aiProviders: [],
@@ -91,13 +101,15 @@ describe('settings store', () => {
     })
 
     const store = useSettingsStore()
-    await store.setShowHiddenContent(true)
+    await store.setShowHiddenContent(true, 'secret-6')
 
     await store.saveSettings({
       hiddenFeatureEnabled: false,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: true,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
       aiProviders: [],
@@ -117,6 +129,8 @@ describe('settings store', () => {
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
       aiProviders: [
@@ -141,6 +155,8 @@ describe('settings store', () => {
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
       aiProviders: [
@@ -160,5 +176,50 @@ describe('settings store', () => {
 
     expect(store.settings.aiProviders[0].api_key).toBeNull()
     expect(store.settings.aiProviders[0].api_key_configured).toBe(true)
+  })
+
+  it('forwards the second password when enabling hidden content', async () => {
+    vi.mocked(settingsApi.getSettings).mockResolvedValue({
+      hiddenFeatureEnabled: true,
+      encryptionEnabled: true,
+      autoConvertTxtToMd: false,
+      showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: true,
+      hiddenVerifyPasswordRequired: false,
+      storageRootPath: 'storage/data',
+      aiFeatureEnabled: false,
+      aiProviders: [],
+      activeAiProviderId: null,
+      backupGitEnabled: false
+    })
+
+    const store = useSettingsStore()
+    await store.loadSettings()
+    await store.setShowHiddenContent(true, 'secret-6')
+
+    expect(authApi.setHiddenContentSession).toHaveBeenCalledWith(true, 'secret-6')
+    expect(store.showHiddenContent).toBe(true)
+  })
+
+  it('keeps hidden content off when the backend rejects the password', async () => {
+    vi.mocked(authApi.setHiddenContentSession).mockRejectedValue(new Error('二次验证码错误'))
+
+    const store = useSettingsStore()
+    await expect(store.setShowHiddenContent(true, 'wrong-xx')).rejects.toThrow('二次验证码错误')
+
+    expect(store.showHiddenContent).toBe(false)
+  })
+
+  it('saves the hidden content password and updates the configured status', async () => {
+    vi.mocked(authApi.changeHiddenContentPassword).mockResolvedValue({
+      configured: true
+    })
+
+    const store = useSettingsStore()
+    const configured = await store.saveHiddenContentPassword('secret-6', 'next-66')
+
+    expect(authApi.changeHiddenContentPassword).toHaveBeenCalledWith('secret-6', 'next-66')
+    expect(configured).toBe(true)
+    expect(store.settings.hiddenVerifyPasswordConfigured).toBe(true)
   })
 })

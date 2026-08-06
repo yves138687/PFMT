@@ -9,6 +9,8 @@ export type SystemSettingKey =
   | 'document.auto_convert_txt_to_md'
   | 'hidden.feature_enabled'
   | 'hidden.show_hidden_default'
+  | 'hidden.verify_password_hash'
+  | 'hidden.verify_password_required'
   | 'ai.feature_enabled'
   | 'ai.providers'
   | 'ai.active_provider_id'
@@ -60,6 +62,8 @@ export interface SystemSettings {
   encryptionEnabled: boolean
   autoConvertTxtToMd: boolean
   showHiddenDefault: boolean
+  hiddenVerifyPasswordConfigured: boolean
+  hiddenVerifyPasswordRequired: boolean
   storageRootPath: string
   aiFeatureEnabled: boolean
   aiProviders: AiProviderConfig[]
@@ -73,6 +77,8 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   encryptionEnabled: true,
   autoConvertTxtToMd: false,
   showHiddenDefault: false,
+  hiddenVerifyPasswordConfigured: false,
+  hiddenVerifyPasswordRequired: false,
   storageRootPath: 'storage/data',
   aiFeatureEnabled: false,
   aiProviders: [],

@@ -61,6 +61,8 @@ describe('settingsApi AI settings', () => {
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
       aiProviders: [
@@ -137,6 +139,15 @@ describe('settingsApi AI settings', () => {
       )
       .mockResolvedValueOnce(
         jsonResponse({
+          setting_key: 'hidden.verify_password_required',
+          setting_value: false,
+          value_type: 'boolean',
+          group_name: 'hidden',
+          is_public: true
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
           setting_key: 'storage.local_root',
           setting_value: 'storage/data',
           value_type: 'string',
@@ -198,6 +209,8 @@ describe('settingsApi AI settings', () => {
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
       showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: false,
+      hiddenVerifyPasswordRequired: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
       aiProviders: [
@@ -215,9 +228,57 @@ describe('settingsApi AI settings', () => {
       backupGitEnabled: false
     })
 
-    const providersRequest = JSON.parse((fetchMock.mock.calls[6][1] as RequestInit).body as string)
+    const providersRequest = JSON.parse((fetchMock.mock.calls[7][1] as RequestInit).body as string)
     expect(providersRequest.setting_value[0].api_key).toBe('sk-secret')
     expect(saved.aiProviders[0].api_key).toBeNull()
     expect(saved.aiProviders[0].api_key_configured).toBe(true)
+  })
+})
+
+
+describe('settingsApi hidden content verification', () => {
+  it('normalizes hidden verification code status and force switch', () => {
+    const settings = normalizeSystemSettings([
+      {
+        setting_key: 'hidden.verify_password_hash',
+        setting_value: true,
+        value_type: 'boolean',
+        group_name: 'hidden',
+        is_public: 0
+      },
+      {
+        setting_key: 'hidden.verify_password_required',
+        setting_value: true,
+        value_type: 'boolean',
+        group_name: 'hidden',
+        is_public: 1
+      }
+    ])
+
+    expect(settings.hiddenVerifyPasswordConfigured).toBe(true)
+    expect(settings.hiddenVerifyPasswordRequired).toBe(true)
+  })
+
+  it('does not send the verification code hash key when saving settings', () => {
+    const dto = systemSettingsToDto({
+      hiddenFeatureEnabled: true,
+      encryptionEnabled: true,
+      autoConvertTxtToMd: false,
+      showHiddenDefault: false,
+      hiddenVerifyPasswordConfigured: true,
+      hiddenVerifyPasswordRequired: true,
+      storageRootPath: 'storage/data',
+      aiFeatureEnabled: false,
+      aiProviders: [],
+      activeAiProviderId: null,
+      backupGitEnabled: false
+    })
+
+    const keys = dto.map((item) => item.setting_key)
+    expect(keys).not.toContain('hidden.verify_password_hash')
+    expect(keys).toContain('hidden.verify_password_required')
+
+    const required = dto.find((item) => item.setting_key === 'hidden.verify_password_required')
+    expect(required?.setting_value).toBe('true')
   })
 })

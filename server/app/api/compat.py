@@ -63,21 +63,27 @@ def _raw_settings(db: Session) -> dict[str, list[dict[str, Any]]]:
     """旧接口返回数据库原始字符串值，供早期联调脚本复用。"""
 
     repository = SettingRepository(db)
-    return {
-        "items": [
+    items = []
+    for item in repository.list_all():
+        setting_value = item.setting_value
+        value_type = item.value_type
+        if item.setting_key == "hidden.verify_password_hash":
+            # 敏感配置只回显“是否已配置”，绝不回显哈希原文。
+            setting_value = bool(item.setting_value)
+            value_type = "boolean"
+        items.append(
             {
                 "setting_key": item.setting_key,
-                "setting_value": item.setting_value,
-                "value_type": item.value_type,
+                "setting_value": setting_value,
+                "value_type": value_type,
                 "group_name": item.group_name,
                 "description": item.description,
                 "is_public": item.is_public,
                 "updated_at": item.updated_at,
                 "updated_by": item.updated_by,
             }
-            for item in repository.list_all()
-        ]
-    }
+        )
+    return {"items": items}
 
 
 def _flat_settings(db: Session) -> dict[str, Any]:

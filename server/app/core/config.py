@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     file_encryption_enabled: bool = True
     hidden_feature_enabled: bool = True
+    hidden_verify_password_min_length: int = 6
     show_hidden_by_default: bool = False
     ai_enabled: bool = False
     backup_enabled: bool = False
@@ -93,3 +94,4 @@ def get_settings() -> Settings:
     """缓存配置对象，测试中可通过 cache_clear 后重新加载环境变量。"""
 
     return Settings()
+

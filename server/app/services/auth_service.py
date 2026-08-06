@@ -4,7 +4,7 @@ import jwt
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import AuthenticationError, TooManyRequestsError
+from app.core.exceptions import AppError, AuthenticationError, PermissionDeniedError, TooManyRequestsError
 from app.core.security import (
     create_access_token,
     decode_access_token,
@@ -14,9 +14,11 @@ from app.core.security import (
 )
 from app.models.user import UserAccount, UserSession
 from app.repositories.session_repository import SessionRepository
+from app.repositories.setting_repository import SettingRepository
 from app.repositories.user_repository import UserRepository
 from app.schemas.auth import TokenResponse, UserProfile
 from app.services.audit_service import AuditService
+from app.services.setting_service import SettingService
 from app.utils.ids import new_business_id
 
 
@@ -25,6 +27,8 @@ class AuthService:
 
     _failed_login_attempts: dict[str, list[datetime]] = {}
     _login_locks: dict[str, datetime] = {}
+    _hidden_verify_failed_attempts: dict[str, list[datetime]] = {}
+    _hidden_verify_locks: dict[str, datetime] = {}
 
     def __init__(self, db: Session, settings: Settings):
         """初始化认证服务依赖的仓储、配置和审计服务。"""
@@ -123,8 +127,16 @@ class AuthService:
         setattr(user, "_pfmt_show_hidden_enabled", bool(session.show_hidden_enabled))
         return user
 
-    def set_hidden_content_enabled(self, *, token: str, current_user: UserAccount, enabled: bool) -> bool:
-        """更新当前登录会话的隐藏内容显示授权。"""
+    def set_hidden_content_enabled(
+        self,
+        *,
+        token: str,
+        current_user: UserAccount,
+        enabled: bool,
+        password: str | None,
+        client_ip: str | None,
+    ) -> bool:
+        """更新当前登录会话的隐藏内容显示授权；开启时若配置了二次验证码需先验证。"""
 
         try:
             payload = decode_access_token(self.settings, token)
@@ -139,9 +151,73 @@ class AuthService:
         if session is None or session.user_id != current_user.user_id or session.access_token != hash_token(token):
             raise AuthenticationError("登录态无效或已过期")
 
+        if enabled:
+            self._verify_hidden_content_password(
+                current_user=current_user,
+                password=password,
+                client_ip=client_ip,
+            )
+
         self.session_repository.set_show_hidden_enabled(session, enabled)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="hidden_content",
+            target_type="session",
+            target_id=session.session_id,
+            result="success",
+            detail={"enabled": enabled},
+            client_ip=client_ip,
+        )
         self.db.commit()
         return enabled
+
+    def set_hidden_content_password(
+        self,
+        *,
+        current_user: UserAccount,
+        current_password: str | None,
+        new_password: str,
+        client_ip: str | None,
+    ) -> bool:
+        """设置或清除隐藏内容二次验证码；已配置时需先通过当前验证码校验。"""
+
+        setting_repository = SettingRepository(self.db)
+        setting = setting_repository.get_by_key("hidden.verify_password_hash")
+        existing_hash = setting.setting_value if setting else None
+
+        rate_limit_key = self._hidden_verify_rate_limit_key(
+            user_id=current_user.user_id, client_ip=client_ip
+        )
+        self._ensure_hidden_verify_allowed(rate_limit_key)
+
+        if existing_hash:
+            if not verify_password(current_password or "", existing_hash):
+                self._record_hidden_verify_failed_attempt(rate_limit_key)
+                self.audit_service.record(
+                    user_id=current_user.user_id,
+                    action_type="update_hidden_verify_password",
+                    target_type="user",
+                    target_id=current_user.user_id,
+                    result="failed",
+                    detail={"reason": "invalid_current_password"},
+                    client_ip=client_ip,
+                )
+                self.db.commit()
+                raise PermissionDeniedError("当前二次验证码错误")
+
+        normalized = (new_password or "").strip()
+        if normalized and len(normalized) < self.settings.hidden_verify_password_min_length:
+            raise AppError(
+                f"二次验证码至少需要 {self.settings.hidden_verify_password_min_length} 位"
+            )
+
+        configured = SettingService(self.db).update_hidden_verify_password_hash(
+            plaintext=normalized or None,
+            updated_by=current_user.user_id,
+            client_ip=client_ip,
+        )
+        self._clear_hidden_verify_attempts(rate_limit_key)
+        return configured
 
     def logout(self, *, token: str, current_user: UserAccount, client_ip: str | None) -> None:
         """退出登录，删除当前会话记录。"""
@@ -163,6 +239,83 @@ class AuthService:
             client_ip=client_ip,
         )
         self.db.commit()
+
+    def _verify_hidden_content_password(
+        self,
+        *,
+        current_user: UserAccount,
+        password: str | None,
+        client_ip: str | None,
+    ) -> None:
+        """校验隐藏内容二次验证码；未配置且未强制要求时可直接开启。"""
+
+        setting_repository = SettingRepository(self.db)
+        setting = setting_repository.get_by_key("hidden.verify_password_hash")
+        expected_hash = setting.setting_value if setting else None
+
+        if not expected_hash:
+            required = SettingService(self.db).get_bool("hidden.verify_password_required", False)
+            if required:
+                raise PermissionDeniedError("请先在系统配置中设置隐藏内容二次验证码")
+            return
+
+        rate_limit_key = self._hidden_verify_rate_limit_key(
+            user_id=current_user.user_id, client_ip=client_ip
+        )
+        self._ensure_hidden_verify_allowed(rate_limit_key)
+        if verify_password(password or "", expected_hash):
+            self._clear_hidden_verify_attempts(rate_limit_key)
+            return
+
+        self._record_hidden_verify_failed_attempt(rate_limit_key)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="hidden_content",
+            target_type="user",
+            target_id=current_user.user_id,
+            result="failed",
+            detail={"reason": "invalid_password", "enabled": True},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        raise PermissionDeniedError("二次验证码错误")
+
+    @staticmethod
+    def _hidden_verify_rate_limit_key(*, user_id: str, client_ip: str | None) -> str:
+        """生成隐藏内容验证限流键，按用户和来源 IP 聚合失败次数。"""
+
+        return f"{user_id}|{client_ip or 'unknown'}"
+
+    def _ensure_hidden_verify_allowed(self, key: str) -> None:
+        """检查隐藏内容验证失败锁定窗口，锁定期间拒绝继续验证。"""
+
+        now = now_utc()
+        locked_until = self._hidden_verify_locks.get(key)
+        if locked_until is not None and locked_until > now:
+            raise TooManyRequestsError("二次验证码错误次数过多，请稍后再试")
+        if locked_until is not None:
+            self._hidden_verify_locks.pop(key, None)
+
+    def _record_hidden_verify_failed_attempt(self, key: str) -> None:
+        """记录一次验证码校验失败，达到阈值后进入临时锁定。"""
+
+        now = now_utc()
+        window_started_at = now - timedelta(minutes=self.settings.login_rate_limit_window_minutes)
+        attempts = [
+            attempt_at
+            for attempt_at in self._hidden_verify_failed_attempts.get(key, [])
+            if attempt_at >= window_started_at
+        ]
+        attempts.append(now)
+        self._hidden_verify_failed_attempts[key] = attempts
+        if len(attempts) >= self.settings.login_rate_limit_attempts:
+            self._hidden_verify_locks[key] = now + timedelta(minutes=self.settings.login_rate_limit_lock_minutes)
+
+    def _clear_hidden_verify_attempts(self, key: str) -> None:
+        """验证成功后清除该限流键的失败记录。"""
+
+        self._hidden_verify_failed_attempts.pop(key, None)
+        self._hidden_verify_locks.pop(key, None)
 
     def _rate_limit_key(self, *, username: str, client_ip: str | None) -> str:
         """生成登录限流键，按用户名和客户端 IP 聚合失败次数。"""

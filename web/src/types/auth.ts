@@ -21,3 +21,12 @@ export interface LoginResponse {
 export interface HiddenContentSessionResponse {
   show_hidden_enabled: boolean
 }
+
+export interface HiddenContentPasswordRequest {
+  current_password?: string | null
+  new_password: string
+}
+
+export interface HiddenContentPasswordResponse {
+  configured: boolean
+}

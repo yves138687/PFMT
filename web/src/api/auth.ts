@@ -1,5 +1,12 @@
 import { http } from './http'
-import type { HiddenContentSessionResponse, LoginRequest, LoginResponse, UserProfile } from '@/types/auth'
+import type {
+  HiddenContentPasswordRequest,
+  HiddenContentPasswordResponse,
+  HiddenContentSessionResponse,
+  LoginRequest,
+  LoginResponse,
+  UserProfile
+} from '@/types/auth'
 
 export const authApi = {
   login(payload: LoginRequest) {
@@ -14,8 +21,15 @@ export const authApi = {
   getHiddenContentSession() {
     return http.get<HiddenContentSessionResponse>('/auth/hidden-content')
   },
-  setHiddenContentSession(enabled: boolean) {
-    return http.put<HiddenContentSessionResponse>('/auth/hidden-content', { enabled })
+  setHiddenContentSession(enabled: boolean, password?: string) {
+    return http.put<HiddenContentSessionResponse>('/auth/hidden-content', { enabled, password })
+  },
+  changeHiddenContentPassword(currentPassword: string, newPassword: string) {
+    const payload: HiddenContentPasswordRequest = {
+      current_password: currentPassword.trim() || null,
+      new_password: newPassword.trim()
+    }
+    return http.put<HiddenContentPasswordResponse>('/auth/hidden-content/password', payload)
   }
 }
 

@@ -117,6 +117,12 @@ export function normalizeSystemSettings(response: SettingsResponse): SystemSetti
       case 'hidden.show_hidden_default':
         settings.showHiddenDefault = toBoolean(item.setting_value, settings.showHiddenDefault)
         break
+      case 'hidden.verify_password_hash':
+        settings.hiddenVerifyPasswordConfigured = toBoolean(item.setting_value, false)
+        break
+      case 'hidden.verify_password_required':
+        settings.hiddenVerifyPasswordRequired = toBoolean(item.setting_value, false)
+        break
       case 'storage.local_root_path':
       case 'storage.local_root':
         settings.storageRootPath = String(item.setting_value ?? settings.storageRootPath)
@@ -179,6 +185,14 @@ export function systemSettingsToDto(settings: SystemSettings): SystemSettingDto[
       group_name: 'hidden',
       description: '默认是否展示隐藏内容',
       is_public: 0
+    },
+    {
+      setting_key: 'hidden.verify_password_required',
+      setting_value: String(settings.hiddenVerifyPasswordRequired),
+      value_type: 'boolean',
+      group_name: 'hidden',
+      description: '未配置二次验证码时是否禁止开启隐藏内容',
+      is_public: 1
     },
     {
       setting_key: 'storage.local_root',

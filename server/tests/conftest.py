@@ -28,6 +28,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
     reset_database_state()
     AuthService._failed_login_attempts.clear()
     AuthService._login_locks.clear()
+    AuthService._hidden_verify_failed_attempts.clear()
+    AuthService._hidden_verify_locks.clear()
+    AuthService._hidden_verify_failed_attempts.clear()
+    AuthService._hidden_verify_locks.clear()
     app = create_app()
     with TestClient(app) as test_client:
         yield test_client

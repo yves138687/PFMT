@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
   Fold,
@@ -63,8 +64,34 @@ function submitSearch() {
   })
 }
 
-function handleShowHiddenChange(value: string | number | boolean) {
-  void settingsStore.setShowHiddenContent(Boolean(value))
+async function handleShowHiddenChange(value: string | number | boolean) {
+  const target = Boolean(value)
+  if (!target) {
+    await settingsStore.setShowHiddenContent(false)
+    return
+  }
+
+  if (!settingsStore.settings.hiddenVerifyPasswordConfigured) {
+    if (settingsStore.settings.hiddenVerifyPasswordRequired) {
+      ElMessage.warning('请先在系统配置中设置隐藏内容二次验证码')
+      return
+    }
+    await settingsStore.setShowHiddenContent(true)
+    return
+  }
+
+  try {
+    const { value: password } = await ElMessageBox.prompt('请输入隐藏内容二次验证码', '二次验证', {
+      inputType: 'password',
+      inputPlaceholder: '请输入二次验证码',
+      confirmButtonText: '验证并显示',
+      cancelButtonText: '取消',
+      inputValidator: (input: string) => input.length >= 6 || '二次验证码至少 6 位'
+    })
+    await settingsStore.setShowHiddenContent(true, password)
+  } catch {
+    // 取消输入或验证失败：开关保持关闭，失败信息由接口统一提示
+  }
 }
 
 function openUploadDialog() {

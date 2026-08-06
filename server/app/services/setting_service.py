@@ -3,6 +3,8 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import PermissionDeniedError
+from app.core.security import hash_password
 from app.models.system import SystemSetting
 from app.repositories.setting_repository import SettingRepository
 from app.schemas.setting import SettingItem, SettingUpdateRequest
@@ -84,6 +86,8 @@ class SettingService:
         """更新或创建配置项，并记录审计日志。"""
 
         existing = self.repository.get_by_key(setting_key)
+        if setting_key == "hidden.verify_password_hash":
+            raise PermissionDeniedError("隐藏内容二次验证码必须通过专用接口修改")
         value_type = payload.value_type or (existing.value_type if existing else self.infer_value_type(payload.setting_value))
         setting_value = payload.setting_value
         if setting_key == "ai.providers":
@@ -127,6 +131,39 @@ class SettingService:
         self.db.commit()
         self.db.refresh(saved)
         return self._to_schema(saved)
+
+    def update_hidden_verify_password_hash(
+        self,
+        *,
+        plaintext: str | None,
+        updated_by: str,
+        client_ip: str | None,
+    ) -> bool:
+        """写入隐藏内容二次验证码哈希；空值表示清除独立验证码，返回是否已配置。"""
+
+        setting_value = hash_password(plaintext) if plaintext else None
+        saved = self.repository.upsert(
+            SystemSetting(
+                setting_key="hidden.verify_password_hash",
+                setting_value=setting_value,
+                value_type="string",
+                group_name="hidden",
+                description="隐藏内容二次验证码（仅存哈希，不回显）",
+                is_public=False,
+                updated_by=updated_by,
+            )
+        )
+        self.audit_service.record(
+            user_id=updated_by,
+            action_type="update_hidden_verify_password",
+            target_type="system_setting",
+            target_id="hidden.verify_password_hash",
+            result="success",
+            detail={"configured": bool(setting_value)},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return bool(saved.setting_value)
 
     def _repair_active_ai_provider_id(
         self,
@@ -257,6 +294,18 @@ class SettingService:
         """将 ORM 配置模型转换为响应模型。"""
 
         setting_value = self.parse_value(setting.setting_value, setting.value_type)
+        if setting.setting_key == "hidden.verify_password_hash":
+            # 只返回“是否已配置”，绝不回显哈希原文。
+            return SettingItem(
+                setting_key=setting.setting_key,
+                setting_value=bool(setting.setting_value),
+                value_type="boolean",
+                group_name=setting.group_name,
+                description=setting.description,
+                is_public=False,
+                updated_at=setting.updated_at,
+                updated_by=setting.updated_by,
+            )
         if setting.setting_key == "ai.providers":
             setting_value = self._mask_ai_providers(setting_value)
 
@@ -312,6 +361,22 @@ DEFAULT_SETTINGS = [
         "group_name": "hidden",
         "description": "默认是否展示隐藏内容",
         "is_public": False,
+    },
+    {
+        "setting_key": "hidden.verify_password_hash",
+        "setting_value": None,
+        "value_type": "string",
+        "group_name": "hidden",
+        "description": "隐藏内容二次验证码（仅存哈希，不回显）",
+        "is_public": False,
+    },
+    {
+        "setting_key": "hidden.verify_password_required",
+        "setting_value": "false",
+        "value_type": "boolean",
+        "group_name": "hidden",
+        "description": "未配置二次验证码时是否禁止开启隐藏内容",
+        "is_public": True,
     },
     {
         "setting_key": "ai.feature_enabled",

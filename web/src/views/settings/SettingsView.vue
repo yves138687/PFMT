@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Key, Plus, Setting, Switch, UploadFilled } from '@element-plus/icons-vue'
 
@@ -7,6 +7,11 @@ import { useSettingsStore } from '@/stores/settingsStore'
 import type { AiProviderConfig, AiProviderType, SystemSettings } from '@/types/settings'
 
 const settingsStore = useSettingsStore()
+
+const hiddenVerifyCurrentPassword = ref('')
+const hiddenVerifyNewPassword = ref('')
+const hiddenVerifyConfirmPassword = ref('')
+const savingHiddenVerifyPassword = ref(false)
 
 const providerTypeOptions: Array<{ label: string; value: AiProviderType }> = [
   { label: 'OpenAI Compatible', value: 'openai_compatible' },
@@ -88,6 +93,39 @@ async function reloadSettings() {
   await settingsStore.loadSettings()
 }
 
+async function saveHiddenVerifyPassword() {
+  if (form.hiddenVerifyPasswordConfigured && !hiddenVerifyCurrentPassword.value) {
+    ElMessage.warning('请输入当前二次验证码')
+    return
+  }
+
+  const newPassword = hiddenVerifyNewPassword.value.trim()
+  if (newPassword && newPassword.length < 6) {
+    ElMessage.warning('新二次验证码至少 6 位')
+    return
+  }
+
+  if (newPassword !== hiddenVerifyConfirmPassword.value) {
+    ElMessage.warning('两次输入的新二次验证码不一致')
+    return
+  }
+
+  savingHiddenVerifyPassword.value = true
+  try {
+    const configured = await settingsStore.saveHiddenContentPassword(
+      hiddenVerifyCurrentPassword.value,
+      newPassword
+    )
+    form.hiddenVerifyPasswordConfigured = configured
+    hiddenVerifyCurrentPassword.value = ''
+    hiddenVerifyNewPassword.value = ''
+    hiddenVerifyConfirmPassword.value = ''
+    ElMessage.success(newPassword ? '隐藏内容二次验证码已更新' : '已清除隐藏内容二次验证码')
+  } finally {
+    savingHiddenVerifyPassword.value = false
+  }
+}
+
 async function saveSettings() {
   if (!form.storageRootPath.trim()) {
     ElMessage.warning('请填写本地存储根路径')
@@ -144,6 +182,51 @@ async function saveSettings() {
           <el-form-item label="隐藏功能">
             <el-switch v-model="form.hiddenFeatureEnabled" />
             <span class="settings-view__help">控制系统是否支持隐藏目录和隐藏文件。</span>
+          </el-form-item>
+          <el-form-item label="强制二次验证">
+            <el-switch v-model="form.hiddenVerifyPasswordRequired" />
+            <span class="settings-view__help">开启后，未配置二次验证码时禁止打开隐藏内容。</span>
+          </el-form-item>
+          <el-form-item label="隐藏内容二次验证码">
+            <div class="settings-view__verify-manage">
+              <div class="settings-view__verify-row">
+                <el-tag :type="form.hiddenVerifyPasswordConfigured ? 'success' : 'info'" size="small">
+                  {{ form.hiddenVerifyPasswordConfigured ? '已配置独立验证码' : '未配置' }}
+                </el-tag>
+                <span class="settings-view__help">开启隐藏内容时需输入验证码（至少 6 位）；留空新验证码表示清除。</span>
+              </div>
+              <div class="settings-view__verify-row">
+                <el-input
+                  v-if="form.hiddenVerifyPasswordConfigured"
+                  v-model="hiddenVerifyCurrentPassword"
+                  type="password"
+                  show-password
+                  class="settings-view__verify-input"
+                  placeholder="当前二次验证码"
+                />
+                <el-input
+                  v-model="hiddenVerifyNewPassword"
+                  type="password"
+                  show-password
+                  class="settings-view__verify-input"
+                  placeholder="新二次验证码（至少 6 位）"
+                />
+                <el-input
+                  v-model="hiddenVerifyConfirmPassword"
+                  type="password"
+                  show-password
+                  class="settings-view__verify-input"
+                  placeholder="确认新二次验证码"
+                />
+                <el-button
+                  type="primary"
+                  :loading="savingHiddenVerifyPassword"
+                  @click="saveHiddenVerifyPassword"
+                >
+                  保存验证码
+                </el-button>
+              </div>
+            </div>
           </el-form-item>
         </el-form>
       </div>
@@ -328,6 +411,25 @@ async function saveSettings() {
 .settings-view__reserved {
   display: grid;
   gap: 12px;
+}
+
+.settings-view__verify-manage {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 620px;
+}
+
+.settings-view__verify-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-view__verify-input {
+  max-width: 260px;
+  width: 100%;
 }
 
 .settings-view__select {

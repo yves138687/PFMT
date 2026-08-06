@@ -36,7 +36,7 @@ export const useSettingsStore = defineStore('settings', {
           settingsApi.getSettings(),
           authApi.getHiddenContentSession()
         ])
-        this.settings = cloneSettings({ ...settings, showHiddenDefault: false })
+        this.settings = cloneSettings({ ...DEFAULT_SYSTEM_SETTINGS, ...settings, showHiddenDefault: false })
         this.initialized = true
         this.showHiddenContent = this.settings.hiddenFeatureEnabled && hiddenSession.show_hidden_enabled
       } finally {
@@ -48,7 +48,11 @@ export const useSettingsStore = defineStore('settings', {
       try {
         const normalizedSettings = cloneSettings({ ...settings, showHiddenDefault: false })
         const savedSettings = await settingsApi.updateSettings(normalizedSettings)
-        this.settings = cloneSettings({ ...savedSettings, showHiddenDefault: false })
+        this.settings = cloneSettings({
+          ...savedSettings,
+          showHiddenDefault: false,
+          hiddenVerifyPasswordConfigured: this.settings.hiddenVerifyPasswordConfigured
+        })
         if (!settings.hiddenFeatureEnabled) {
           await authApi.setHiddenContentSession(false)
           this.showHiddenContent = false
@@ -58,17 +62,16 @@ export const useSettingsStore = defineStore('settings', {
         this.saving = false
       }
     },
-    async setShowHiddenContent(value: boolean) {
+    async setShowHiddenContent(value: boolean, password?: string) {
+      // 非乐观置位：等后端确认成功后再更新界面，确保目录树/文件列表在会话授权生效后才刷新。
       const enabled = this.settings.hiddenFeatureEnabled && value
-      const previous = this.showHiddenContent
-      this.showHiddenContent = enabled
-      try {
-        const response = await authApi.setHiddenContentSession(enabled)
-        this.showHiddenContent = this.settings.hiddenFeatureEnabled && response.show_hidden_enabled
-      } catch (error) {
-        this.showHiddenContent = previous
-        throw error
-      }
+      const response = await authApi.setHiddenContentSession(enabled, password)
+      this.showHiddenContent = this.settings.hiddenFeatureEnabled && response.show_hidden_enabled
+    },
+    async saveHiddenContentPassword(currentPassword: string, newPassword: string) {
+      const response = await authApi.changeHiddenContentPassword(currentPassword, newPassword)
+      this.settings.hiddenVerifyPasswordConfigured = response.configured
+      return response.configured
     }
   }
 })
