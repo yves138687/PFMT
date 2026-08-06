@@ -43,6 +43,7 @@ class CompatFlatSettingsRequest(BaseModel):
     """兼容合约里的扁平系统设置请求。"""
 
     file_encryption_enabled: bool | None = None
+    auto_convert_txt_to_md: bool | None = None
     hidden_feature_enabled: bool | None = None
     show_hidden_by_default: bool | None = None
     storage_root: str | None = None
@@ -92,6 +93,7 @@ def _flat_settings(db: Session) -> dict[str, Any]:
 
     return {
         "file_encryption_enabled": read_value("storage.encryption_enabled", True),
+        "auto_convert_txt_to_md": read_value("document.auto_convert_txt_to_md", False),
         "hidden_feature_enabled": read_value("hidden.feature_enabled", True),
         "show_hidden_by_default": read_value("hidden.show_hidden_default", False),
         "storage_root": read_value("storage.local_root", "./storage"),
@@ -194,6 +196,7 @@ def update_system_settings_compat(
     service = SettingService(db)
     key_map = {
         "file_encryption_enabled": "storage.encryption_enabled",
+        "auto_convert_txt_to_md": "document.auto_convert_txt_to_md",
         "hidden_feature_enabled": "hidden.feature_enabled",
         "show_hidden_by_default": "hidden.show_hidden_default",
         "storage_root": "storage.local_root",

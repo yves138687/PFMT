@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Delete, Key, Lock, Plus, Setting, Switch } from '@element-plus/icons-vue'
+import { Delete, Key, Plus, Setting, Switch, UploadFilled } from '@element-plus/icons-vue'
 
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { AiProviderConfig, AiProviderType, SystemSettings } from '@/types/settings'
@@ -151,13 +151,17 @@ async function saveSettings() {
 
     <section class="work-panel settings-view__section">
       <div class="panel-header">
-        <h2><el-icon><Lock /></el-icon> 加密设置</h2>
+        <h2><el-icon><UploadFilled /></el-icon> 上传设置</h2>
       </div>
       <div class="panel-body">
         <el-form label-width="180px">
           <el-form-item label="文件本体加密">
             <el-switch v-model="form.encryptionEnabled" />
             <span class="settings-view__help">上传入口会把该开关作为 encryption_enabled 提交给后端。</span>
+          </el-form-item>
+          <el-form-item label="TXT 转 Markdown">
+            <el-switch v-model="form.autoConvertTxtToMd" />
+            <span class="settings-view__help">开启后，上传 .txt 文档会自动保存为 .md 文件。</span>
           </el-form-item>
           <el-alert
             :closable="false"

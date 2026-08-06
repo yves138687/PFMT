@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
-import { ElMessage } from 'element-plus'
-import { ArrowLeft, Download, Refresh, Switch, UploadFilled } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft, Download, MagicStick, Refresh, Switch, UploadFilled } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { filesApi } from '@/api/files'
@@ -20,6 +20,7 @@ import {
 } from '@/utils/documentOutline'
 import { saveBlobResponse } from '@/utils/download'
 import { renderMarkdown } from '@/utils/markdown'
+import { beautifyText } from '@/utils/textBeautify'
 
 type DocumentMode = 'read' | 'edit' | 'source'
 type ProseMirrorNode = {
@@ -328,6 +329,51 @@ async function exportDocument() {
   }
 }
 
+async function beautifyDocument() {
+  const currentDocument = documentContent.value
+  if (!currentDocument || mode.value === 'read') {
+    return
+  }
+
+  const original = currentSaveContent()
+  const formatted = beautifyText(original, currentDocument.document_format)
+  if (formatted === original) {
+    ElMessage.info('文本已符合规范，无需整理')
+    return
+  }
+
+  const ruleDescriptions: Record<DocumentFormat, string> = {
+    plain_text: '统一换行符、去除首尾空白、清理行尾空格、把单个换行补成空行、折叠多余空行',
+    markdown: '统一换行符、去除首尾空白、折叠多余空行（代码块内部保持不变）',
+    html: '统一换行符、去除首尾空白'
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将整理当前文本：${ruleDescriptions[currentDocument.document_format]}。`,
+      '整理文本',
+      {
+        type: 'warning',
+        confirmButtonText: '应用',
+        cancelButtonText: '取消'
+      }
+    )
+  } catch {
+    return
+  }
+
+  sourceContent.value = formatted
+  if (mode.value === 'edit') {
+    editor.value?.commands.setContent(editorHtmlFromSource())
+    editorVersion.value += 1
+    await nextTick()
+    applyEditorOutlineIds()
+  } else {
+    await nextTick()
+    resizeSourceTextarea()
+  }
+  ElMessage.success('整理完成')
+}
+
 function applyEditorOutlineIds() {
   if (mode.value !== 'edit') {
     return
@@ -548,6 +594,7 @@ onBeforeUnmount(() => {
         <el-button :icon="Refresh" :loading="loading" @click="loadDocument">刷新</el-button>
         <el-button :icon="Download" :loading="exporting" :disabled="!documentContent" @click="exportDocument">导出</el-button>
         <el-button :icon="Switch" :disabled="!documentContent" @click="openConvertDialog">转换</el-button>
+        <el-button :icon="MagicStick" :disabled="!documentContent || mode === 'read'" @click="beautifyDocument">整理文本</el-button>
         <el-button type="primary" :icon="UploadFilled" :loading="saving" :disabled="!documentContent" @click="saveDocument">
           保存
         </el-button>

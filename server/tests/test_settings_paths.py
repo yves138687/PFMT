@@ -8,6 +8,7 @@ def test_settings_can_be_read_and_updated(client: TestClient, auth_headers: dict
     assert settings.status_code == 200
     keys = {item["setting_key"] for item in settings.json()}
     assert "storage.encryption_enabled" in keys
+    assert "document.auto_convert_txt_to_md" in keys
     assert "hidden.show_hidden_default" in keys
 
     update = client.put(

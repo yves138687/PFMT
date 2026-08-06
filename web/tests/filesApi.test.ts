@@ -418,6 +418,20 @@ describe('filesApi', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE')
   })
 
+  it('deletes selected files through the batch endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.deleteFiles(['file_1', 'file_2'], true)
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/delete')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      file_ids: ['file_1', 'file_2']
+    })
+  })
+
   it('exports one file and selected files without visibility query', async () => {
     const fetchMock = vi
       .fn()

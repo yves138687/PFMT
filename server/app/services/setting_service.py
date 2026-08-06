@@ -290,6 +290,14 @@ DEFAULT_SETTINGS = [
         "is_public": True,
     },
     {
+        "setting_key": "document.auto_convert_txt_to_md",
+        "setting_value": "false",
+        "value_type": "boolean",
+        "group_name": "document",
+        "description": "上传 txt 文档时是否自动保存为 Markdown",
+        "is_public": True,
+    },
+    {
         "setting_key": "hidden.feature_enabled",
         "setting_value": "true",
         "value_type": "boolean",

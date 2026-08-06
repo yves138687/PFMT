@@ -6,6 +6,7 @@ export type SystemSettingKey =
   | 'storage.encryption_enabled'
   | 'storage.local_root'
   | 'storage.local_root_path'
+  | 'document.auto_convert_txt_to_md'
   | 'hidden.feature_enabled'
   | 'hidden.show_hidden_default'
   | 'ai.feature_enabled'
@@ -57,6 +58,7 @@ export interface SettingItem extends Omit<SystemSettingDto, 'setting_value' | 'i
 export interface SystemSettings {
   hiddenFeatureEnabled: boolean
   encryptionEnabled: boolean
+  autoConvertTxtToMd: boolean
   showHiddenDefault: boolean
   storageRootPath: string
   aiFeatureEnabled: boolean
@@ -69,6 +71,7 @@ export interface SystemSettings {
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   hiddenFeatureEnabled: true,
   encryptionEnabled: true,
+  autoConvertTxtToMd: false,
   showHiddenDefault: false,
   storageRootPath: 'storage/data',
   aiFeatureEnabled: false,

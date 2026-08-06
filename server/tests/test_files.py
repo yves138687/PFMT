@@ -673,6 +673,57 @@ def test_file_can_be_moved_and_deleted(
         assert db.execute(stmt).scalar_one_or_none() is not None
 
 
+def test_files_can_be_deleted_in_batch(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """批量删除会软删全部所选文件，并清理对应存储对象。"""
+
+    first = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("first.md", b"# First\n", "text/markdown")},
+    )
+    second = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("second.txt", b"Second", "text/plain")},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+    file_ids = [first.json()["file_id"], second.json()["file_id"]]
+
+    with Session(get_engine()) as db:
+        object_paths = [
+            get_settings().storage_root_path / Path(file_info.storage_path)
+            for file_info in db.execute(select(FileInfo).where(FileInfo.file_id.in_(file_ids))).scalars().all()
+        ]
+        assert all(path.exists() for path in object_paths)
+
+    delete_response = client.post(
+        "/api/files/delete",
+        headers=auth_headers,
+        json={"file_ids": [file_ids[0], file_ids[1], file_ids[0]]},
+    )
+
+    assert delete_response.status_code == 204
+    assert client.get("/api/files", headers=auth_headers, params={"path_id": "root"}).json() == []
+    assert all(not path.exists() for path in object_paths)
+
+    with Session(get_engine()) as db:
+        statuses = {
+            file_info.file_id: file_info.status
+            for file_info in db.execute(select(FileInfo).where(FileInfo.file_id.in_(file_ids))).scalars().all()
+        }
+        assert statuses == {file_ids[0]: "deleted", file_ids[1]: "deleted"}
+        stmt = select(AuditLog).where(
+            AuditLog.action_type == "delete_files",
+            AuditLog.action_result == "success",
+        )
+        assert db.execute(stmt).scalar_one_or_none() is not None
+
+
 def test_move_file_duplicate_name_auto_renames(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
@@ -853,6 +904,41 @@ def test_document_endpoint_reads_text_markdown_and_html(
         assert body["content"] == content
         assert body["editable"] is True
         assert body["rendered_html"]
+
+
+def test_txt_upload_auto_converts_to_markdown_when_enabled(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """开启系统配置后，上传 .txt 文档会自动保存为 Markdown 元数据。"""
+
+    setting_response = client.put(
+        "/api/settings/document.auto_convert_txt_to_md",
+        headers=auth_headers,
+        json={"setting_value": True},
+    )
+    assert setting_response.status_code == 200
+    assert setting_response.json()["setting_value"] is True
+
+    content = "plain heading\n\nbody"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("note.txt", content.encode("utf-8"), "text/plain")},
+    )
+
+    assert upload_response.status_code == 201
+    uploaded = upload_response.json()
+    assert uploaded["original_name"] == "note.md"
+    assert uploaded["file_ext"] == ".md"
+    assert uploaded["mime_type"] == "text/markdown"
+    assert uploaded["file_type"] == "text"
+    assert uploaded["size_bytes"] == len(content.encode("utf-8"))
+
+    document_response = client.get(f"/api/files/{uploaded['file_id']}/document", headers=auth_headers)
+    assert document_response.status_code == 200
+    assert document_response.json()["document_format"] == "markdown"
+    assert document_response.json()["content"] == content
 
 
 def test_create_document_uses_encrypted_generated_file_pipeline(
@@ -1046,10 +1132,10 @@ def test_document_convert_creates_new_file_and_keeps_source(
     assert "<h1>Title</h1>" in converted_document.json()["content"]
 
 
-def test_document_merge_creates_new_markdown_by_original_name_order(
+def test_document_merge_creates_new_markdown_by_requested_order(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    """批量合并按原始文件名升序生成新 Markdown 文档，并保留源文件。"""
+    """批量合并按请求中的文件 ID 顺序生成新 Markdown 文档，并保留源文件。"""
 
     first = client.post(
         "/api/files/upload",
@@ -1085,7 +1171,7 @@ def test_document_merge_creates_new_markdown_by_original_name_order(
     merged_document = client.get(f"/api/files/{merged['file_id']}/document", headers=auth_headers)
     assert merged_document.status_code == 200
     content = merged_document.json()["content"]
-    assert content.index("# a.md") < content.index("# b.txt")
+    assert content.index("# b.txt") < content.index("# a.md")
     assert "two" in content
     assert "# A" in content
 

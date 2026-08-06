@@ -43,6 +43,7 @@ const visible = computed({
 const encryptionText = computed(() => (settingsStore.encryptionEnabled ? '已启用文件本体加密' : '未启用文件本体加密'))
 const fileInputId = createUploadId('pfmt-file-upload')
 const directoryInputId = createUploadId('pfmt-directory-upload')
+const txtConvertText = computed(() => (settingsStore.autoConvertTxtToMd ? 'TXT 将自动转为 Markdown' : 'TXT 保持原格式'))
 
 function createUploadId(prefix: string) {
   uploadUidSeed += 1
@@ -187,6 +188,7 @@ watch(
     <div class="file-upload-dialog__meta">
       <span>上传到：{{ targetFullPath }}</span>
       <el-tag :type="settingsStore.encryptionEnabled ? 'success' : 'warning'">{{ encryptionText }}</el-tag>
+      <el-tag :type="settingsStore.autoConvertTxtToMd ? 'success' : 'info'">{{ txtConvertText }}</el-tag>
     </div>
 
     <div class="file-upload-dialog__conflict">
@@ -317,6 +319,7 @@ watch(
 
 .file-upload-dialog__meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;

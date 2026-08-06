@@ -9,6 +9,7 @@ def test_settings_can_be_read_and_updated(client: TestClient, auth_headers: dict
     keys = {item["setting_key"] for item in list_response.json()}
     assert "storage.encryption_enabled" in keys
     assert "storage.local_root" in keys
+    assert "document.auto_convert_txt_to_md" in keys
 
     update_response = client.put(
         "/api/v1/settings/storage.encryption_enabled",

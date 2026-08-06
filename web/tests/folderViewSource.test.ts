@@ -72,6 +72,14 @@ describe('FolderView source contract', () => {
     expect(source).toContain('saveBlobResponse')
   })
 
+  it('deletes selected files through the batch action', () => {
+    expect(source).toContain('删除所选')
+    expect(source).toContain('deleteSelectedFiles')
+    expect(source).toContain('deleteSelectedFilesFromDrawer')
+    expect(source).toContain('filesApi.deleteFiles')
+    expect(source).toContain('deleteFilesLoading')
+  })
+
   it('supports merging selected documents into a new file', () => {
     expect(source).toContain('合并文档')
     expect(source).toContain('openMergeSelectedDocuments')
@@ -80,7 +88,10 @@ describe('FolderView source contract', () => {
     expect(source).toContain('selectedDocumentFiles')
     expect(source).toContain('canMergeSelectedDocuments')
     expect(source).toContain(':disabled="!canMergeSelectedDocuments"')
-    expect(source).toContain('按原始文件名升序合并')
+    expect(source).toContain('mergeDocumentOrder')
+    expect(source).toContain('handleMergeDocumentDragStart')
+    expect(source).toContain('handleMergeDocumentDrop')
+    expect(source).toContain('moveMergeDocument')
     expect(source).toContain("name: 'document'")
   })
 

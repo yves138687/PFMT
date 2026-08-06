@@ -45,4 +45,14 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('font-family: ui-monospace')
     expect(source).toContain('resize: none')
   })
+
+  it('keeps the beautify/cleanup feature wired into the document page', () => {
+    expect(source).toContain("import { beautifyText } from '@/utils/textBeautify'")
+    expect(source).toContain('MagicStick')
+    expect(source).toContain('beautifyDocument')
+    expect(source).toContain('beautifyText(original, currentDocument.document_format)')
+    expect(source).toContain('ElMessageBox.confirm')
+    expect(source).toContain('整理文本')
+    expect(source).toContain(":disabled=\"!documentContent || mode === 'read'\"")
+  })
 })

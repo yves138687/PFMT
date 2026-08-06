@@ -14,6 +14,7 @@ from app.schemas.file import (
     DocumentMergeRequest,
     DocumentReadResponse,
     DocumentSaveRequest,
+    FileBatchDeleteRequest,
     FileConflictStrategy,
     FileDetailResponse,
     FileExportRequest,
@@ -253,6 +254,25 @@ def merge_documents(
     """将选中的多个文档合并为同目录新文件。"""
 
     return FileService(db, settings).merge_documents(
+        payload=payload,
+        show_hidden=show_hidden,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
+def delete_files(
+    payload: FileBatchDeleteRequest,
+    show_hidden: bool | None = Query(default=None),
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> None:
+    """批量删除所选文件。"""
+
+    FileService(db, settings).delete_files(
         payload=payload,
         show_hidden=show_hidden,
         current_user=current_user,

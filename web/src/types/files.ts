@@ -136,3 +136,7 @@ export interface DocumentMergePayload {
   target_format: DocumentFormat
   target_name?: string | null
 }
+
+export interface FileBatchDeletePayload {
+  file_ids: string[]
+}

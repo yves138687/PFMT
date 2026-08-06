@@ -9,6 +9,12 @@ const source = readFileSync(
 )
 
 describe('SettingsView source contract', () => {
+  it('offers an upload option for automatic txt to markdown conversion', () => {
+    expect(source).toContain('上传设置')
+    expect(source).toContain('form.autoConvertTxtToMd')
+    expect(source).toContain('TXT 转 Markdown')
+  })
+
   it('supports AI provider list management and default model selection', () => {
     expect(source).toContain('AI 设置')
     expect(source).toContain('addAiProvider')

@@ -34,6 +34,7 @@ describe('settings store', () => {
     vi.mocked(settingsApi.getSettings).mockResolvedValue({
       hiddenFeatureEnabled: true,
       encryptionEnabled: false,
+      autoConvertTxtToMd: true,
       showHiddenDefault: true,
       storageRootPath: 'D:/pfmt/storage',
       aiFeatureEnabled: false,
@@ -46,6 +47,7 @@ describe('settings store', () => {
     await store.loadSettings()
 
     expect(store.encryptionEnabled).toBe(false)
+    expect(store.autoConvertTxtToMd).toBe(true)
     expect(store.showHiddenContent).toBe(false)
     expect(store.settings.showHiddenDefault).toBe(false)
     expect(store.settings.storageRootPath).toBe('D:/pfmt/storage')
@@ -56,6 +58,7 @@ describe('settings store', () => {
     vi.mocked(settingsApi.getSettings).mockResolvedValue({
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
@@ -78,6 +81,7 @@ describe('settings store', () => {
     vi.mocked(settingsApi.updateSettings).mockResolvedValue({
       hiddenFeatureEnabled: false,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
@@ -92,6 +96,7 @@ describe('settings store', () => {
     await store.saveSettings({
       hiddenFeatureEnabled: false,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: true,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: false,
@@ -110,6 +115,7 @@ describe('settings store', () => {
     vi.mocked(settingsApi.updateSettings).mockResolvedValue({
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
@@ -133,6 +139,7 @@ describe('settings store', () => {
     await store.saveSettings({
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,

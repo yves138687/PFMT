@@ -6,6 +6,7 @@ import {
   ArrowLeft,
   ArrowDown,
   ArrowRight,
+  ArrowUp,
   Close,
   Delete,
   DocumentAdd,
@@ -69,6 +70,7 @@ const createDocumentLoading = ref(false)
 const moveFileVisible = ref(false)
 const moveFileLoading = ref(false)
 const exportFilesLoading = ref(false)
+const deleteFilesLoading = ref(false)
 const moveFileTargetPathId = ref('root')
 const selectedFiles = ref<FileInfo[]>([])
 const fileTableRef = ref<{
@@ -78,6 +80,8 @@ const fileTableRef = ref<{
 const syncingTableSelection = ref(false)
 const mergeDocumentVisible = ref(false)
 const mergeDocumentLoading = ref(false)
+const mergeDocumentOrder = ref<FileInfo[]>([])
+const mergeDragFileId = ref('')
 const mergeDocumentForm = ref<{
   target_name: string
   target_format: DocumentFormat
@@ -654,6 +658,11 @@ async function exportSelectedFilesFromDrawer() {
   await exportSelectedFiles()
 }
 
+async function deleteSelectedFilesFromDrawer() {
+  batchActionsDrawerVisible.value = false
+  await deleteSelectedFiles()
+}
+
 function openMergeSelectedDocumentsFromDrawer() {
   batchActionsDrawerVisible.value = false
   openMergeSelectedDocuments()
@@ -802,7 +811,48 @@ function openMergeSelectedDocuments() {
     target_name: '合并文档.md',
     target_format: 'markdown'
   }
+  mergeDocumentOrder.value = [...selectedDocumentFiles.value]
+  mergeDragFileId.value = ''
   mergeDocumentVisible.value = true
+}
+
+function moveMergeDocument(fromIndex: number, toIndex: number) {
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= mergeDocumentOrder.value.length ||
+    toIndex >= mergeDocumentOrder.value.length
+  ) {
+    return
+  }
+
+  const nextOrder = [...mergeDocumentOrder.value]
+  const [moved] = nextOrder.splice(fromIndex, 1)
+  nextOrder.splice(toIndex, 0, moved)
+  mergeDocumentOrder.value = nextOrder
+}
+
+function handleMergeDocumentDragStart(file: FileInfo, event: DragEvent) {
+  mergeDragFileId.value = file.file_id
+  event.dataTransfer?.setData('text/plain', file.file_id)
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = 'move'
+  }
+}
+
+function handleMergeDocumentDrop(targetFile: FileInfo, event: DragEvent) {
+  event.preventDefault()
+  const draggedFileId = event.dataTransfer?.getData('text/plain') || mergeDragFileId.value
+  if (!draggedFileId || draggedFileId === targetFile.file_id) {
+    mergeDragFileId.value = ''
+    return
+  }
+
+  const fromIndex = mergeDocumentOrder.value.findIndex((file) => file.file_id === draggedFileId)
+  const toIndex = mergeDocumentOrder.value.findIndex((file) => file.file_id === targetFile.file_id)
+  moveMergeDocument(fromIndex, toIndex)
+  mergeDragFileId.value = ''
 }
 
 function handleSelectionChange(selection: FileInfo[]) {
@@ -839,8 +889,57 @@ async function exportSingleFile(file: FileInfo) {
   ElMessage.success('文件已开始导出')
 }
 
+async function deleteSelectedFiles() {
+  if (!selectedFiles.value.length) {
+    ElMessage.warning('请先选择要删除的文件')
+    return
+  }
+
+  const filesToDelete = [...selectedFiles.value]
+  const fileIds = new Set(filesToDelete.map((file) => file.file_id))
+  const previewNames = filesToDelete
+    .slice(0, 3)
+    .map((file) => `“${file.original_name}”`)
+    .join('、')
+  const message =
+    filesToDelete.length > 3
+      ? `确认删除 ${filesToDelete.length} 个文件？包括 ${previewNames} 等。`
+      : `确认删除所选 ${filesToDelete.length} 个文件？${previewNames}`
+
+  try {
+    await ElMessageBox.confirm(message, '批量删除文件', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'el-button--danger'
+    })
+  } catch {
+    return
+  }
+
+  deleteFilesLoading.value = true
+  try {
+    await filesApi.deleteFiles([...fileIds], settingsStore.showHiddenContent)
+    if (propertiesFile.value && fileIds.has(propertiesFile.value.file_id)) {
+      propertiesVisible.value = false
+      propertiesFile.value = null
+    }
+    if (currentImageFile.value && fileIds.has(currentImageFile.value.file_id)) {
+      closeImagePreview()
+    }
+    if (currentVideoFile.value && fileIds.has(currentVideoFile.value.file_id)) {
+      closeVideoPreview()
+    }
+    selectedFiles.value = []
+    ElMessage.success(`已删除 ${fileIds.size} 个文件`)
+    await loadFiles()
+  } finally {
+    deleteFilesLoading.value = false
+  }
+}
+
 async function mergeSelectedDocuments() {
-  if (!canMergeSelectedDocuments.value) {
+  if (mergeDocumentOrder.value.length < 2) {
     ElMessage.warning('请至少选择两个文档')
     return
   }
@@ -849,13 +948,15 @@ async function mergeSelectedDocuments() {
   try {
     const merged = await filesApi.mergeDocuments(
       {
-        file_ids: selectedFiles.value.map((file) => file.file_id),
+        file_ids: mergeDocumentOrder.value.map((file) => file.file_id),
         target_format: mergeDocumentForm.value.target_format,
         target_name: normalizeOptionalText(mergeDocumentForm.value.target_name)
       },
       settingsStore.showHiddenContent
     )
     mergeDocumentVisible.value = false
+    mergeDocumentOrder.value = []
+    mergeDragFileId.value = ''
     selectedFiles.value = []
     ElMessage.success('已生成合并文档')
     await loadFiles()
@@ -1209,6 +1310,16 @@ onBeforeUnmount(() => {
             <el-button :icon="Download" :disabled="!selectedFiles.length" :loading="exportFilesLoading" @click="exportSelectedFiles">
               导出所选
             </el-button>
+            <el-button
+              :icon="Delete"
+              type="danger"
+              plain
+              :disabled="!selectedFiles.length"
+              :loading="deleteFilesLoading"
+              @click="deleteSelectedFiles"
+            >
+              删除所选
+            </el-button>
             <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
               合并文档
             </el-button>
@@ -1424,6 +1535,16 @@ onBeforeUnmount(() => {
         >
           导出所选
         </el-button>
+        <el-button
+          :icon="Delete"
+          type="danger"
+          plain
+          :disabled="!selectedFiles.length"
+          :loading="deleteFilesLoading"
+          @click="deleteSelectedFilesFromDrawer"
+        >
+          删除所选
+        </el-button>
         <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocumentsFromDrawer">
           合并文档
         </el-button>
@@ -1488,10 +1609,47 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="mergeDocumentVisible" title="合并为新文档" width="460px">
+    <el-dialog v-model="mergeDocumentVisible" title="合并为新文档" width="560px">
       <el-form label-position="top">
         <el-form-item label="已选文档">
-          <span class="muted">{{ selectedDocumentFiles.length }} 个文档，将按原始文件名升序合并</span>
+          <div class="merge-order" aria-label="合并文档顺序">
+            <article
+              v-for="(file, index) in mergeDocumentOrder"
+              :key="file.file_id"
+              class="merge-order__item"
+              :class="{ 'merge-order__item--dragging': mergeDragFileId === file.file_id }"
+              :draggable="!mergeDocumentLoading"
+              @dragstart="handleMergeDocumentDragStart(file, $event)"
+              @dragover.prevent
+              @drop="handleMergeDocumentDrop(file, $event)"
+              @dragend="mergeDragFileId = ''"
+            >
+              <el-icon class="merge-order__handle"><Rank /></el-icon>
+              <span class="merge-order__index">{{ index + 1 }}</span>
+              <span class="merge-order__content">
+                <strong>{{ file.original_name }}</strong>
+                <small>{{ formatFileSize(file.size_bytes) }}</small>
+              </span>
+              <span class="merge-order__tools">
+                <el-button
+                  text
+                  circle
+                  :icon="ArrowUp"
+                  :disabled="index === 0 || mergeDocumentLoading"
+                  :aria-label="`${file.original_name}上移`"
+                  @click="moveMergeDocument(index, index - 1)"
+                />
+                <el-button
+                  text
+                  circle
+                  :icon="ArrowDown"
+                  :disabled="index === mergeDocumentOrder.length - 1 || mergeDocumentLoading"
+                  :aria-label="`${file.original_name}下移`"
+                  @click="moveMergeDocument(index, index + 1)"
+                />
+              </span>
+            </article>
+          </div>
         </el-form-item>
         <el-form-item label="目标格式">
           <el-select v-model="mergeDocumentForm.target_format">
@@ -1971,6 +2129,63 @@ onBeforeUnmount(() => {
 
 .folder-view__path-select {
   width: 100%;
+}
+
+.merge-order {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+}
+
+.merge-order__item {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 24px 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: #ffffff;
+  border: 1px solid var(--pfmt-border-soft);
+  border-radius: 8px;
+}
+
+.merge-order__item--dragging {
+  border-color: var(--pfmt-primary);
+  opacity: 0.58;
+}
+
+.merge-order__handle {
+  color: var(--pfmt-text-muted);
+  cursor: grab;
+}
+
+.merge-order__index {
+  color: var(--pfmt-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.merge-order__content {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.merge-order__content strong,
+.merge-order__content small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merge-order__content small {
+  color: var(--pfmt-text-muted);
+}
+
+.merge-order__tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .folder-view__drawer :deep(.el-drawer__body) {

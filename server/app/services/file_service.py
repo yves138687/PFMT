@@ -29,6 +29,7 @@ from app.schemas.file import (
     DocumentMergeRequest,
     DocumentReadResponse,
     DocumentSaveRequest,
+    FileBatchDeleteRequest,
     FileConflictStrategy,
     FileDetailResponse,
     FileExportRequest,
@@ -236,6 +237,12 @@ class FileService:
         original_name = Path(upload_file.filename or "unnamed").name or "unnamed"
         file_ext = normalize_extension(original_name)
         mime_type = upload_file.content_type
+        auto_converted_txt_to_md = False
+        if file_ext == ".txt" and self.setting_service.get_bool("document.auto_convert_txt_to_md", False):
+            original_name = f"{Path(original_name).stem}.md"
+            file_ext = ".md"
+            mime_type = "text/markdown"
+            auto_converted_txt_to_md = True
         file_type = detect_file_type(file_ext, mime_type)
         existing_file = self.repository.get_active_by_name(path_id=parent_path.path_id, original_name=original_name)
         should_encrypt = (
@@ -276,6 +283,7 @@ class FileService:
                         "size_bytes": stored_object.size_bytes,
                         "encryption_enabled": should_encrypt,
                         "conflict_strategy": conflict_strategy,
+                        "auto_converted_txt_to_md": auto_converted_txt_to_md,
                     },
                     client_ip=client_ip,
                 )
@@ -339,6 +347,7 @@ class FileService:
                     "file_type": file_type,
                     "size_bytes": stored_object.size_bytes,
                     "encryption_enabled": should_encrypt,
+                    "auto_converted_txt_to_md": auto_converted_txt_to_md,
                 },
                 client_ip=client_ip,
             )
@@ -747,7 +756,6 @@ class FileService:
         if parent_path is None:
             raise NotFoundError("文件不存在")
 
-        source_files.sort(key=lambda item: item[0].original_name.lower())
         merged_content = self._merge_document_contents(source_files, payload.target_format)
         target_name = payload.target_name or f"合并文档{document_format_extension(payload.target_format)}"
         target_ext = normalize_extension(target_name)
@@ -1368,6 +1376,64 @@ class FileService:
         self.logger.info(
             "文件删除完成",
             extra={"action": "delete_file", "target_type": "file", "target_id": file_id, "result": "success"},
+        )
+
+    def delete_files(
+        self,
+        *,
+        payload: FileBatchDeleteRequest,
+        show_hidden: bool | None,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> None:
+        """批量软删除文件元数据，提交成功后清理本地存储对象。"""
+
+        files_to_delete: list[FileInfo] = []
+        try:
+            for file_id in payload.file_ids:
+                file_info, _parent_path = self._get_visible_file_and_path(
+                    file_id=file_id,
+                    show_hidden=show_hidden,
+                    action_type="delete_files",
+                    current_user=current_user,
+                    client_ip=client_ip,
+                )
+                files_to_delete.append(file_info)
+
+            storage_paths = [file_info.storage_path for file_info in files_to_delete]
+            for file_info in files_to_delete:
+                self.repository.soft_delete(file_info, user_id=current_user.user_id)
+
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="delete_files",
+                target_type="file",
+                result="success",
+                detail={
+                    "file_ids": payload.file_ids,
+                    "count": len(files_to_delete),
+                },
+                client_ip=client_ip,
+            )
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="delete_files",
+                target_type="file",
+                result="failed",
+                detail={"reason": "delete_failed", "file_ids": payload.file_ids},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise
+
+        for storage_path in storage_paths:
+            self.storage_service.delete_object(storage_path)
+        self.logger.info(
+            "文件批量删除完成",
+            extra={"action": "delete_files", "target_type": "file", "result": "success"},
         )
 
     def _record_failed_upload(self, user_id: str, client_ip: str | None, reason: str) -> None:

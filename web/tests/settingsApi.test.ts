@@ -15,6 +15,13 @@ describe('settingsApi AI settings', () => {
   it('normalizes AI provider JSON settings', () => {
     const settings = normalizeSystemSettings([
       {
+        setting_key: 'document.auto_convert_txt_to_md',
+        setting_value: true,
+        value_type: 'boolean',
+        group_name: 'document',
+        is_public: 1
+      },
+      {
         setting_key: 'ai.providers',
         setting_value: [
           {
@@ -42,6 +49,7 @@ describe('settingsApi AI settings', () => {
     ])
 
     expect(settings.aiProviders).toHaveLength(1)
+    expect(settings.autoConvertTxtToMd).toBe(true)
     expect(settings.aiProviders[0].api_key).toBeNull()
     expect(settings.aiProviders[0].api_key_configured).toBe(true)
     expect(settings.activeAiProviderId).toBe('openai-main')
@@ -51,6 +59,7 @@ describe('settingsApi AI settings', () => {
     const dto = systemSettingsToDto({
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
@@ -71,8 +80,11 @@ describe('settingsApi AI settings', () => {
     })
 
     const providers = dto.find((item) => item.setting_key === 'ai.providers')
+    const autoConvertTxtToMd = dto.find((item) => item.setting_key === 'document.auto_convert_txt_to_md')
     const activeProviderId = dto.find((item) => item.setting_key === 'ai.active_provider_id')
 
+    expect(autoConvertTxtToMd?.setting_value).toBe('false')
+    expect(autoConvertTxtToMd?.value_type).toBe('boolean')
     expect(providers?.value_type).toBe('json')
     expect(providers?.setting_value).toEqual([
       expect.objectContaining({
@@ -102,6 +114,15 @@ describe('settingsApi AI settings', () => {
           setting_value: true,
           value_type: 'boolean',
           group_name: 'storage',
+          is_public: true
+        })
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          setting_key: 'document.auto_convert_txt_to_md',
+          setting_value: false,
+          value_type: 'boolean',
+          group_name: 'document',
           is_public: true
         })
       )
@@ -175,6 +196,7 @@ describe('settingsApi AI settings', () => {
     const saved = await settingsApi.updateSettings({
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
+      autoConvertTxtToMd: false,
       showHiddenDefault: false,
       storageRootPath: 'storage/data',
       aiFeatureEnabled: true,
@@ -193,7 +215,7 @@ describe('settingsApi AI settings', () => {
       backupGitEnabled: false
     })
 
-    const providersRequest = JSON.parse((fetchMock.mock.calls[5][1] as RequestInit).body as string)
+    const providersRequest = JSON.parse((fetchMock.mock.calls[6][1] as RequestInit).body as string)
     expect(providersRequest.setting_value[0].api_key).toBe('sk-secret')
     expect(saved.aiProviders[0].api_key).toBeNull()
     expect(saved.aiProviders[0].api_key_configured).toBe(true)

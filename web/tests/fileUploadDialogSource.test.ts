@@ -33,6 +33,12 @@ describe('FileUploadDialog source contract', () => {
     expect(source).toContain('覆盖已有文件')
   })
 
+  it('shows whether txt uploads will be converted to markdown', () => {
+    expect(source).toContain('autoConvertTxtToMd')
+    expect(source).toContain('TXT 将自动转为 Markdown')
+    expect(source).toContain('TXT 保持原格式')
+  })
+
   it('uses a mobile-compatible file chooser and queue layout', () => {
     expect(source).toContain(':close-on-click-modal="false"')
     expect(source).toContain('width="min(760px, calc(100vw - 24px))"')

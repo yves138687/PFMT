@@ -4,6 +4,7 @@ import type {
   DocumentCreatePayload,
   DocumentConvertPayload,
   DocumentMergePayload,
+  FileBatchDeletePayload,
   DocumentSavePayload,
   FileDetail,
   FileInfo,
@@ -72,6 +73,12 @@ export const filesApi = {
   },
   deleteFile(fileId: string, _showHidden?: boolean) {
     return http.delete<void>(`/files/${encodeURIComponent(fileId)}`)
+  },
+  deleteFiles(fileIds: string[], _showHidden?: boolean) {
+    const payload: FileBatchDeletePayload = {
+      file_ids: fileIds
+    }
+    return http.post<void>('/files/delete', payload)
   },
   exportFile(fileId: string, _showHidden?: boolean) {
     return http.blobResponse(`/files/${encodeURIComponent(fileId)}/export`, {

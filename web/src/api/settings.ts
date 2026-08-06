@@ -111,6 +111,9 @@ export function normalizeSystemSettings(response: SettingsResponse): SystemSetti
       case 'storage.encryption_enabled':
         settings.encryptionEnabled = toBoolean(item.setting_value, settings.encryptionEnabled)
         break
+      case 'document.auto_convert_txt_to_md':
+        settings.autoConvertTxtToMd = toBoolean(item.setting_value, settings.autoConvertTxtToMd)
+        break
       case 'hidden.show_hidden_default':
         settings.showHiddenDefault = toBoolean(item.setting_value, settings.showHiddenDefault)
         break
@@ -159,6 +162,14 @@ export function systemSettingsToDto(settings: SystemSettings): SystemSettingDto[
       value_type: 'boolean',
       group_name: 'storage',
       description: '是否默认启用文件本体加密',
+      is_public: 1
+    },
+    {
+      setting_key: 'document.auto_convert_txt_to_md',
+      setting_value: String(settings.autoConvertTxtToMd),
+      value_type: 'boolean',
+      group_name: 'document',
+      description: '上传 txt 文档时是否自动保存为 Markdown',
       is_public: 1
     },
     {

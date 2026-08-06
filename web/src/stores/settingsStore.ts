@@ -24,6 +24,7 @@ export const useSettingsStore = defineStore('settings', {
   getters: {
     hiddenFeatureEnabled: (state) => state.settings.hiddenFeatureEnabled,
     encryptionEnabled: (state) => state.settings.encryptionEnabled,
+    autoConvertTxtToMd: (state) => state.settings.autoConvertTxtToMd,
     activeAiProvider: (state) =>
       state.settings.aiProviders.find((provider) => provider.id === state.settings.activeAiProviderId) ?? null
   },
