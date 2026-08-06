@@ -1249,9 +1249,6 @@ onBeforeUnmount(() => {
               </button>
             </template>
           </el-table-column>
-          <el-table-column v-if="settingsStore.showHiddenContent" label="状态" width="90">
-            <template #default="{ row }">{{ row.is_hidden ? '隐藏' : '显示' }}</template>
-          </el-table-column>
           <el-table-column label="文件类型" width="120">
             <template #default="{ row }">{{ fileTypeText(row.file_type) }}</template>
           </el-table-column>
