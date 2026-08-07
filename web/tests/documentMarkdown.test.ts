@@ -29,6 +29,16 @@ describe('document markdown serializer', () => {
     expect(serializeMarkdownDocument(doc)).toBe('![示意图](/api/files/file_abc/stream)')
   })
 
+  it('serializes top-level image nodes inserted by the editor', () => {
+    const doc: ProseMirrorNode = {
+      content: [
+        { type: 'image', attrs: { src: '/api/files/file_top/stream', alt: '截图' } },
+        paragraph(text('说明'))
+      ]
+    }
+    expect(serializeMarkdownDocument(doc)).toBe('![截图](/api/files/file_top/stream)\n\n说明')
+  })
+
   it('serializes image title when present', () => {
     const doc: ProseMirrorNode = {
       content: [

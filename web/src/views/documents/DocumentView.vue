@@ -4,6 +4,7 @@ import DOMPurify from 'dompurify'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import Image from '@tiptap/extension-image'
+import TiptapLink from '@tiptap/extension-link'
 import { TableKit } from '@tiptap/extension-table'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Slice } from '@tiptap/pm/model'
@@ -13,7 +14,7 @@ import {
   ArrowLeft,
   Download,
   Grid,
-  Link,
+  Link as LinkIcon,
   List,
   MagicStick,
   Minus,
@@ -31,6 +32,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { filesApi } from '@/api/files'
 import DocumentEmbedDialog from '@/components/DocumentEmbedDialog.vue'
+import DocumentImagePreview from '@/components/DocumentImagePreview.vue'
 import DocumentOutline from '@/components/DocumentOutline.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { DocumentContent, DocumentFormat } from '@/types/files'
@@ -44,6 +46,7 @@ import {
   buildMarkdownOutline
 } from '@/utils/documentOutline'
 import { saveBlobResponse } from '@/utils/download'
+import { extractDocumentImageFileId } from '@/utils/documentMedia'
 import { getEmbedToken, resolveEmbedUrls, stripEmbedTokens } from '@/utils/embedFiles'
 import { renderMarkdown } from '@/utils/markdown'
 import { beautifyText } from '@/utils/textBeautify'
@@ -69,6 +72,10 @@ const sourceRef = ref<HTMLTextAreaElement | null>(null)
 const safeRenderedHtml = ref('')
 const embedDialogVisible = ref(false)
 const embedDialogMode = ref<'image' | 'file'>('image')
+const imagePreviewVisible = ref(false)
+const imagePreviewLoading = ref(false)
+const imagePreviewUrl = ref('')
+const imagePreviewTitle = ref('')
 const headingSelector = 'h1, h2, h3, h4, h5, h6'
 const convertForm = ref<{ target_format: DocumentFormat; target_name: string }>({
   target_format: 'html',
@@ -163,7 +170,14 @@ const headingLevel = computed({
 })
 
 const editor = useEditor({
-  extensions: [StarterKit, Image, TableKit],
+  extensions: [
+    StarterKit,
+    TiptapLink.configure({
+      openOnClick: false
+    }),
+    Image,
+    TableKit
+  ],
   editable: true,
   content: '',
   editorProps: {
@@ -302,7 +316,7 @@ function currentSaveContent() {
     if (currentDocument.document_format === 'html') {
       content = editor.value?.getHTML() ?? sourceContent.value
     } else if (currentDocument.document_format === 'markdown') {
-      content = serializeMarkdownDocument(editor.value?.getJSON() as ProseMirrorNode | undefined) || sourceContent.value
+      content = serializeMarkdownDocument(editor.value?.getJSON() as ProseMirrorNode | undefined)
     } else {
       content = editor.value?.getText() ?? sourceContent.value
     }
@@ -739,6 +753,55 @@ async function insertUploadedImages(files: File[]) {
   }
 }
 
+function findEventImage(event: MouseEvent): HTMLImageElement | null {
+  return event.target instanceof Element ? event.target.closest('img') : null
+}
+
+function imageSource(image: HTMLImageElement): string {
+  return image.currentSrc || image.src || image.getAttribute('src') || ''
+}
+
+async function openDocumentImagePreview(event: MouseEvent) {
+  const image = findEventImage(event)
+  if (!image) {
+    return
+  }
+  const fileId = extractDocumentImageFileId(imageSource(image))
+  if (!fileId) {
+    ElMessage.warning('只能预览文档内引用的知识库图片')
+    return
+  }
+
+  imagePreviewTitle.value = image.alt || image.getAttribute('title') || '图片预览'
+  imagePreviewVisible.value = true
+  imagePreviewLoading.value = true
+  revokeImagePreviewUrl()
+  try {
+    const blob = await filesApi.getPreviewBlob(fileId, settingsStore.showHiddenContent)
+    imagePreviewUrl.value = URL.createObjectURL(blob)
+  } catch (error) {
+    imagePreviewVisible.value = false
+    const message = error instanceof Error ? error.message : '图片预览加载失败'
+    ElMessage.error(message)
+  } finally {
+    imagePreviewLoading.value = false
+  }
+}
+
+function handleImagePreviewVisibleChange(visible: boolean) {
+  imagePreviewVisible.value = visible
+  if (!visible) {
+    revokeImagePreviewUrl()
+  }
+}
+
+function revokeImagePreviewUrl() {
+  if (imagePreviewUrl.value) {
+    URL.revokeObjectURL(imagePreviewUrl.value)
+    imagePreviewUrl.value = ''
+  }
+}
+
 watch(
   [fileId, () => settingsStore.showHiddenContent],
   () => {
@@ -763,6 +826,7 @@ watch(sourceContent, () => {
 
 onBeforeUnmount(() => {
   editor.value?.destroy()
+  revokeImagePreviewUrl()
 })
 </script>
 
@@ -881,7 +945,7 @@ onBeforeUnmount(() => {
               size="small"
               :type="toolbarActive.link ? 'primary' : 'default'"
               title="链接"
-              :icon="Link"
+              :icon="LinkIcon"
               @click="toggleLink"
             />
             <el-button size="small" title="分割线" @click="editor?.chain().focus().setHorizontalRule().run()">—</el-button>
@@ -923,8 +987,9 @@ onBeforeUnmount(() => {
             class="document-view__canvas"
             :class="`document-view__canvas--${mode}`"
             @scroll="updateActiveOutline"
+            @dblclick="openDocumentImagePreview"
           >
-            <article v-if="mode === 'read'" class="document-view__rendered" v-html="safeRenderedHtml" />
+            <article v-if="mode === 'read'" class="document-view__rendered document-view__prose" v-html="safeRenderedHtml" />
             <EditorContent v-else-if="mode === 'edit'" class="document-view__editor" :editor="editor" />
             <textarea
               v-else
@@ -969,6 +1034,14 @@ onBeforeUnmount(() => {
       :mode="embedDialogMode"
       :parent-path-id="fromPathId ?? 'root'"
       @insert="handleEmbedInsert"
+    />
+
+    <DocumentImagePreview
+      :model-value="imagePreviewVisible"
+      :title="imagePreviewTitle"
+      :image-url="imagePreviewUrl"
+      :loading="imagePreviewLoading"
+      @update:model-value="handleImagePreviewVisibleChange"
     />
   </section>
 </template>
@@ -1031,16 +1104,17 @@ onBeforeUnmount(() => {
   min-height: 62vh;
   max-height: calc(100vh - 210px);
   overflow: auto;
-  padding: 18px;
+  padding: 22px 24px;
   background: #fff;
   border: 1px solid var(--pfmt-border);
   border-radius: 8px;
   color: var(--pfmt-text);
-  line-height: 1.75;
+  line-height: 1.72;
 }
 
 .document-view__canvas--source {
-  padding: 18px;
+  padding: 0;
+  background: #fbfcfe;
 }
 
 .document-view__rendered,
@@ -1049,17 +1123,35 @@ onBeforeUnmount(() => {
   min-height: calc(62vh - 36px);
 }
 
-.document-view__rendered :deep(h1),
-.document-view__rendered :deep(h2),
-.document-view__rendered :deep(h3) {
-  scroll-margin-top: 16px;
-  margin: 1.2em 0 0.5em;
-  line-height: 1.35;
+.document-view__prose,
+.document-view__editor :deep(.ProseMirror) {
+  max-width: 880px;
+  min-height: calc(62vh - 44px);
+  margin: 0 auto;
+  color: var(--pfmt-text);
+  font-size: 15px;
+  line-height: 1.72;
 }
 
-.document-view__rendered :deep(h4),
-.document-view__rendered :deep(h5),
-.document-view__rendered :deep(h6),
+.document-view__editor :deep(.ProseMirror) {
+  outline: none;
+}
+
+.document-view__prose :deep(*) {
+  overflow-wrap: break-word;
+}
+
+.document-view__prose :deep(p),
+.document-view__editor :deep(.ProseMirror p) {
+  margin: 0.72em 0;
+}
+
+.document-view__prose :deep(h1),
+.document-view__prose :deep(h2),
+.document-view__prose :deep(h3),
+.document-view__prose :deep(h4),
+.document-view__prose :deep(h5),
+.document-view__prose :deep(h6),
 .document-view__editor :deep(h1),
 .document-view__editor :deep(h2),
 .document-view__editor :deep(h3),
@@ -1067,41 +1159,178 @@ onBeforeUnmount(() => {
 .document-view__editor :deep(h5),
 .document-view__editor :deep(h6) {
   scroll-margin-top: 16px;
+  margin: 1.35em 0 0.55em;
+  color: #172033;
+  font-weight: 700;
+  line-height: 1.32;
 }
 
-.document-view__editor :deep(.ProseMirror) {
-  min-height: calc(62vh - 36px);
-  outline: none;
+.document-view__prose :deep(h1),
+.document-view__editor :deep(h1) {
+  padding-bottom: 0.28em;
+  border-bottom: 1px solid #d9e1ec;
+  font-size: 1.85em;
 }
 
+.document-view__prose :deep(h2),
+.document-view__editor :deep(h2) {
+  padding-bottom: 0.22em;
+  border-bottom: 1px solid #edf1f6;
+  font-size: 1.45em;
+}
+
+.document-view__prose :deep(h3),
+.document-view__editor :deep(h3) {
+  font-size: 1.22em;
+}
+
+.document-view__prose :deep(h4),
+.document-view__editor :deep(h4) {
+  font-size: 1.08em;
+}
+
+.document-view__prose :deep(a),
+.document-view__editor :deep(a) {
+  color: var(--el-color-primary);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--el-color-primary) 38%, transparent);
+}
+
+.document-view__prose :deep(a:hover),
+.document-view__editor :deep(a:hover) {
+  border-bottom-color: var(--el-color-primary);
+}
+
+.document-view__prose :deep(ul),
+.document-view__prose :deep(ol),
+.document-view__editor :deep(ul),
+.document-view__editor :deep(ol) {
+  margin: 0.72em 0;
+  padding-left: 1.55em;
+}
+
+.document-view__prose :deep(li + li),
+.document-view__editor :deep(li + li) {
+  margin-top: 0.24em;
+}
+
+.document-view__prose :deep(blockquote),
+.document-view__editor :deep(blockquote) {
+  margin: 1em 0;
+  padding: 10px 14px 10px 16px;
+  color: #44536a;
+  background: #f6f8fb;
+  border: 1px solid #dce5f0;
+  border-left: 4px solid #6f95bd;
+  border-radius: 6px;
+}
+
+.document-view__prose :deep(blockquote > :first-child),
+.document-view__editor :deep(blockquote > :first-child) {
+  margin-top: 0;
+}
+
+.document-view__prose :deep(blockquote > :last-child),
+.document-view__editor :deep(blockquote > :last-child) {
+  margin-bottom: 0;
+}
+
+.document-view__prose :deep(code),
+.document-view__editor :deep(code) {
+  padding: 0.12em 0.36em;
+  color: #9b2c2c;
+  background: #fff1f0;
+  border: 1px solid #ffd4ce;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.92em;
+}
+
+.document-view__prose :deep(pre),
+.document-view__editor :deep(pre) {
+  margin: 1em 0;
+  padding: 14px 16px;
+  overflow-x: auto;
+  color: #d9e3f0;
+  background: #182230;
+  border: 1px solid #2c3a4d;
+  border-radius: 8px;
+  line-height: 1.65;
+}
+
+.document-view__prose :deep(pre code),
+.document-view__editor :deep(pre code) {
+  display: block;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: 13px;
+  white-space: pre;
+}
+
+.document-view__prose :deep(hr),
+.document-view__editor :deep(hr) {
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid #d7deea;
+}
+
+.document-view__prose :deep(img),
 .document-view__editor :deep(img) {
+  display: block;
   max-width: 100%;
+  height: auto;
+  margin: 1em auto;
+  border: 1px solid #dce5f0;
+  border-radius: 8px;
+  cursor: zoom-in;
 }
 
+.document-view__editor :deep(.ProseMirror-selectednode) {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+}
+
+.document-view__prose :deep(table),
 .document-view__editor :deep(table) {
   width: 100%;
+  margin: 1em 0;
   border-collapse: collapse;
+  font-size: 14px;
 }
 
+.document-view__prose :deep(th),
+.document-view__prose :deep(td),
 .document-view__editor :deep(th),
 .document-view__editor :deep(td) {
-  border: 1px solid var(--pfmt-border);
-  padding: 6px 10px;
+  border: 1px solid #d7deea;
+  padding: 8px 10px;
+  vertical-align: top;
+}
+
+.document-view__prose :deep(th),
+.document-view__editor :deep(th) {
+  color: #263449;
+  background: #f3f6fa;
+  font-weight: 700;
 }
 
 .document-view__source {
   width: 100%;
   min-height: calc(62vh - 36px);
-  padding: 0;
+  padding: 22px 24px;
   overflow: hidden;
   resize: none;
   border: 0;
   outline: none;
-  color: var(--pfmt-text);
+  color: #1e293b;
   background: transparent;
   font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
   font-size: 14px;
-  line-height: 1.7;
+  line-height: 1.72;
+  tab-size: 2;
 }
 
 .document-view__canvas:focus-within {

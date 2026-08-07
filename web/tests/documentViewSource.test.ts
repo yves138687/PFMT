@@ -59,6 +59,16 @@ describe('DocumentView source contract', () => {
     expect(source).toContain("ensureAttachmentFolder")
   })
 
+  it('opens document images in a reusable preview from read and edit modes', () => {
+    expect(source).toContain("DocumentImagePreview")
+    expect(source).toContain("extractDocumentImageFileId")
+    expect(source).toContain("@dblclick=\"openDocumentImagePreview\"")
+    expect(source).toContain("filesApi.getPreviewBlob")
+    expect(source).toContain("URL.createObjectURL")
+    expect(source).toContain("URL.revokeObjectURL")
+    expect(source).toContain("cursor: zoom-in")
+  })
+
   it('keeps the beautify/cleanup feature wired into the document page', () => {
     expect(source).toContain("import { beautifyText } from '@/utils/textBeautify'")
     expect(source).toContain('MagicStick')

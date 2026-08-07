@@ -29,6 +29,9 @@ function serializeMarkdownBlock(node: ProseMirrorNode, depth: number): string {
   if (node.type === 'paragraph') {
     return serializeInline(children)
   }
+  if (node.type === 'image') {
+    return serializeImage(node)
+  }
   if (node.type === 'bulletList') {
     return children.map((child) => serializeListItem(child, depth, '-')).join('\n')
   }
