@@ -53,12 +53,17 @@ import { beautifyText } from '@/utils/textBeautify'
 
 type DocumentMode = 'read' | 'edit' | 'source'
 
+const DEFAULT_READ_FONT_SIZE = 15
+const MIN_READ_FONT_SIZE = 12
+const MAX_READ_FONT_SIZE = 24
+
 const route = useRoute()
 const router = useRouter()
 const settingsStore = useSettingsStore()
 const documentContent = ref<DocumentContent | null>(null)
 const sourceContent = ref('')
 const mode = ref<DocumentMode>('read')
+const readFontSize = ref(DEFAULT_READ_FONT_SIZE)
 const loading = ref(false)
 const saving = ref(false)
 const converting = ref(false)
@@ -236,6 +241,14 @@ function handleModeChange(value: string | number | boolean | undefined) {
   if (value === 'read' || value === 'edit' || value === 'source') {
     setMode(value)
   }
+}
+
+function decreaseReadFontSize() {
+  readFontSize.value = Math.max(MIN_READ_FONT_SIZE, readFontSize.value - 1)
+}
+
+function increaseReadFontSize() {
+  readFontSize.value = Math.min(MAX_READ_FONT_SIZE, readFontSize.value + 1)
 }
 
 async function setEditorContentFromSource() {
@@ -857,6 +870,15 @@ onBeforeUnmount(() => {
           <el-radio-button label="source">源码</el-radio-button>
         </el-radio-group>
         <span class="muted">统一文档打开</span>
+        <div v-if="mode === 'read'" class="document-view__read-font-controls">
+          <el-button size="small" title="减小阅读字号" :disabled="readFontSize <= MIN_READ_FONT_SIZE" @click="decreaseReadFontSize">
+            A−
+          </el-button>
+          <span class="document-view__read-font-size">{{ readFontSize }}px</span>
+          <el-button size="small" title="增大阅读字号" :disabled="readFontSize >= MAX_READ_FONT_SIZE" @click="increaseReadFontSize">
+            A+
+          </el-button>
+        </div>
       </div>
       <div v-loading="loading" class="panel-body document-view__body">
         <div v-if="showToolbar" class="document-view__toolbar">
@@ -989,7 +1011,12 @@ onBeforeUnmount(() => {
             @scroll="updateActiveOutline"
             @dblclick="openDocumentImagePreview"
           >
-            <article v-if="mode === 'read'" class="document-view__rendered document-view__prose" v-html="safeRenderedHtml" />
+            <article
+              v-if="mode === 'read'"
+              class="document-view__rendered document-view__prose"
+              :style="{ '--document-read-font-size': `${readFontSize}px` }"
+              v-html="safeRenderedHtml"
+            />
             <EditorContent v-else-if="mode === 'edit'" class="document-view__editor" :editor="editor" />
             <textarea
               v-else
@@ -1088,6 +1115,20 @@ onBeforeUnmount(() => {
   margin: 0 2px;
 }
 
+.document-view__read-font-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.document-view__read-font-size {
+  min-width: 38px;
+  color: var(--pfmt-text-secondary);
+  font-size: 13px;
+  text-align: center;
+}
+
 .document-view__workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1129,8 +1170,15 @@ onBeforeUnmount(() => {
   min-height: calc(62vh - 44px);
   margin: 0 auto;
   color: var(--pfmt-text);
-  font-size: 15px;
   line-height: 1.72;
+}
+
+.document-view__prose {
+  font-size: var(--document-read-font-size);
+}
+
+.document-view__editor :deep(.ProseMirror) {
+  font-size: 15px;
 }
 
 .document-view__editor :deep(.ProseMirror) {
