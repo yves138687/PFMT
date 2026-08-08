@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS file_info (
     checksum_sha256 TEXT,
     encryption_enabled INTEGER NOT NULL DEFAULT 1 CHECK (encryption_enabled IN (0, 1)),
     key_wrap_version TEXT,
+    key_id TEXT,
     summary_content TEXT,
     summary_source TEXT CHECK (summary_source IN ('manual', 'ai')),
     summary_updated_at DATETIME,
@@ -233,6 +234,20 @@ CREATE TABLE IF NOT EXISTS system_setting (
         ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS file_key (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_id TEXT NOT NULL,
+    key_material TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active_completed' CHECK (status IN ('expired', 'active_rotating', 'active_completed')),
+    is_active INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    activated_at DATETIME,
+    completed_at DATETIME,
+    expired_at DATETIME,
+    UNIQUE (key_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_user_session_user_id ON user_session(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_session_expires_at ON user_session(expires_at);
 
@@ -249,6 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_file_info_created_at ON file_info(created_at);
 CREATE INDEX IF NOT EXISTS idx_file_info_updated_at ON file_info(updated_at);
 CREATE INDEX IF NOT EXISTS idx_file_info_last_accessed_at ON file_info(last_accessed_at);
 CREATE INDEX IF NOT EXISTS idx_file_info_checksum_sha256 ON file_info(checksum_sha256);
+CREATE INDEX IF NOT EXISTS idx_file_info_encryption_key_status ON file_info(encryption_enabled, key_id, status);
 
 CREATE INDEX IF NOT EXISTS idx_file_tag_status ON file_tag(status);
 CREATE INDEX IF NOT EXISTS idx_file_tag_rel_file_id ON file_tag_rel(file_id);
@@ -267,6 +283,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_action_type_created_at ON audit_log(act
 
 CREATE INDEX IF NOT EXISTS idx_system_setting_group_name ON system_setting(group_name);
 CREATE INDEX IF NOT EXISTS idx_system_setting_public_group ON system_setting(is_public, group_name);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_file_key_one_active ON file_key(is_active) WHERE is_active = 1;
+CREATE INDEX IF NOT EXISTS idx_file_key_active ON file_key(is_active, status);
 
 INSERT OR IGNORE INTO system_setting (
     setting_key,

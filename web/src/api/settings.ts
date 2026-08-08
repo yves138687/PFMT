@@ -1,5 +1,5 @@
 import { http } from './http'
-import type { AiProviderConfig, AiProviderType, SystemSettingDto, SystemSettings } from '@/types/settings'
+import type { AiProviderConfig, AiProviderType, FileEncryptionStatus, SystemSettingDto, SystemSettings } from '@/types/settings'
 import { DEFAULT_SYSTEM_SETTINGS, type SettingItem } from '@/types/settings'
 import { boolSetting } from '@/utils/format'
 
@@ -249,6 +249,18 @@ export const settingsApi = {
   async getSettings() {
     const response = await http.get<SettingsResponse>('/settings')
     return normalizeSystemSettings(response)
+  },
+  getFileEncryptionStatus() {
+    return http.get<FileEncryptionStatus>('/settings/file-encryption')
+  },
+  enableFileEncryption(key: string) {
+    return http.post<FileEncryptionStatus>('/settings/file-encryption/enable', { key })
+  },
+  rotateFileEncryptionKey(key: string) {
+    return http.post<FileEncryptionStatus>('/settings/file-encryption/rotate', { key })
+  },
+  disableFileEncryption() {
+    return http.post<FileEncryptionStatus>('/settings/file-encryption/disable')
   },
   async updateSettings(settings: SystemSettings) {
     const responses: SystemSettingDto[] = []

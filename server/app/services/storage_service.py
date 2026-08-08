@@ -1,4 +1,5 @@
 import hashlib
+import os
 import shutil
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from app.utils.crypto import (
     encrypt_chunk,
     generate_storage_name,
     iter_decrypted_chunks,
-    load_master_key,
+    normalize_key_material,
 )
 
 STORAGE_DATA_ROOT = "data"
@@ -36,6 +37,7 @@ class StoredObject:
     size_bytes: int
     checksum_sha256: str
     key_wrap_version: str | None
+    key_id: str | None
 
 
 @dataclass(frozen=True)
@@ -64,16 +66,46 @@ class ContentRange:
 class StorageService:
     """本地文件存储服务，负责随机对象名、分块写入和分块解密。"""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, db=None):
         """根据系统配置初始化存储根目录和文件加密主密钥。"""
 
         self.settings = settings
         self.storage_root = settings.storage_root_path
+        self.db = db
+
+    def _file_key_service(self):
+        from app.core.database import get_session_factory
+        from app.services.file_key_service import FileKeyService
+
+        if self.db is not None:
+            return FileKeyService(self.db, self.settings), None
+        db = get_session_factory(self.settings)()
+        return FileKeyService(db, self.settings), db
+
+    def _active_file_key(self):
+        service, owned_db = self._file_key_service()
+        try:
+            return service.active_key()
+        finally:
+            if owned_db is not None:
+                owned_db.close()
+
+    def _file_key_for(self, file_info: FileInfo):
+        service, owned_db = self._file_key_service()
+        try:
+            return service.key_for_file(file_info)
+        finally:
+            if owned_db is not None:
+                owned_db.close()
 
     def ensure_storage_root_available(self) -> None:
-        """启动前确认用户配置的存储根路径存在，避免静默创建空库。"""
+        """启动前确认用户配置的存储根路径可用；缺失时自动创建。"""
 
-        if not self.storage_root.exists() or not self.storage_root.is_dir():
+        self._validate_absolute_path(self.storage_root)
+        if not self.storage_root.exists():
+            self.storage_root.mkdir(parents=True, exist_ok=True)
+            return
+        if not self.storage_root.is_dir():
             raise RuntimeError(f"文件存储根路径不存在或不是目录: {self.storage_root}")
 
     def ensure_data_root(self) -> None:
@@ -140,8 +172,11 @@ class StorageService:
         size_bytes = 0
         chunk_index = 0
         file_key = None
+        key_id = None
         if encryption_enabled:
-            file_key = derive_file_key(load_master_key(self.settings), file_id)
+            resolved_key = self._active_file_key()
+            file_key = derive_file_key(resolved_key.key, file_id)
+            key_id = resolved_key.key_id
 
         try:
             with temp_path.open("wb") as output:
@@ -172,6 +207,7 @@ class StorageService:
             size_bytes=size_bytes,
             checksum_sha256=hasher.hexdigest(),
             key_wrap_version=KEY_WRAP_VERSION if encryption_enabled else None,
+            key_id=key_id,
         )
 
     def save_bytes(
@@ -189,7 +225,7 @@ class StorageService:
         self._validate_relative_path(relative_path)
         final_path = self.storage_root / relative_path
         self._validate_absolute_path(final_path)
-        self._write_bytes_to_path(
+        stored_key_id = self._write_bytes_to_path(
             content=content,
             file_id=file_id,
             encryption_enabled=encryption_enabled,
@@ -201,17 +237,19 @@ class StorageService:
             size_bytes=len(content),
             checksum_sha256=hashlib.sha256(content).hexdigest(),
             key_wrap_version=KEY_WRAP_VERSION if encryption_enabled else None,
+            key_id=stored_key_id,
         )
 
-    def replace_file_content(self, *, file_info: FileInfo, content: bytes) -> StoredObject:
+    def replace_file_content(self, *, file_info: FileInfo, content: bytes, key_id: str | None = None) -> StoredObject:
         """原子替换现有文件对象内容，保留存储对象名和相对路径。"""
 
         final_path = self._absolute_object_path(file_info.storage_path)
-        self._write_bytes_to_path(
+        stored_key_id = self._write_bytes_to_path(
             content=content,
             file_id=file_info.file_id,
             encryption_enabled=file_info.encryption_enabled,
             final_path=final_path,
+            key_id=key_id,
         )
         return StoredObject(
             storage_object_name=file_info.storage_object_name,
@@ -219,6 +257,63 @@ class StorageService:
             size_bytes=len(content),
             checksum_sha256=hashlib.sha256(content).hexdigest(),
             key_wrap_version=KEY_WRAP_VERSION if file_info.encryption_enabled else None,
+            key_id=stored_key_id,
+        )
+
+    def reencrypt_file_to_temp_object(self, *, file_info: FileInfo, target_key_id: str) -> StoredObject:
+        """把现有加密文件流式解密后写入轮转临时对象，成功后返回新对象元数据。"""
+
+        service, owned_db = self._file_key_service()
+        try:
+            key_version = service.repository.get_by_key_id(target_key_id)
+            if key_version is None or not key_version.is_active:
+                raise RuntimeError(f"文件密钥版本不存在或未激活: {target_key_id}")
+            target_file_key = derive_file_key(normalize_key_material(key_version.key_material), file_info.file_id)
+        finally:
+            if owned_db is not None:
+                owned_db.close()
+
+        chunk_size = max(64 * 1024, self.settings.upload_chunk_size)
+        object_name = generate_storage_name(self.settings, kind="file", object_id=f"{file_info.file_id}-{os.urandom(4).hex()}")
+        final_relative_path = Path(file_info.storage_path).parent / object_name
+        temp_relative_path = Path(".rotation_tmp") / f"{object_name}.tmp"
+        self._validate_relative_path(final_relative_path)
+        self._validate_relative_path(temp_relative_path)
+        final_path = self.storage_root / final_relative_path
+        temp_path = self.storage_root / temp_relative_path
+        self._validate_absolute_path(final_path)
+        self._validate_absolute_path(temp_path)
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path.parent.mkdir(parents=True, exist_ok=True)
+
+        hasher = hashlib.sha256()
+        size_bytes = 0
+        chunk_index = 0
+        try:
+            with temp_path.open("wb") as output:
+                output.write(build_header(chunk_size))
+                for chunk in self.iter_content_chunks(file_info):
+                    size_bytes += len(chunk)
+                    hasher.update(chunk)
+                    output.write(encrypt_chunk(target_file_key, file_info.file_id, chunk_index, chunk))
+                    chunk_index += 1
+            if size_bytes != file_info.size_bytes:
+                raise RuntimeError("轮转后明文大小校验失败")
+            if file_info.checksum_sha256 and hasher.hexdigest() != file_info.checksum_sha256:
+                raise RuntimeError("轮转后明文校验和不一致")
+            temp_path.replace(final_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            final_path.unlink(missing_ok=True)
+            raise
+
+        return StoredObject(
+            storage_object_name=object_name,
+            storage_path=final_relative_path.as_posix(),
+            size_bytes=size_bytes,
+            checksum_sha256=hasher.hexdigest(),
+            key_wrap_version=KEY_WRAP_VERSION,
+            key_id=target_key_id,
         )
 
     def _write_bytes_to_path(
@@ -228,11 +323,30 @@ class StorageService:
         file_id: str,
         encryption_enabled: bool,
         final_path: Path,
-    ) -> None:
+        key_id: str | None = None,
+    ) -> str | None:
         chunk_size = max(64 * 1024, self.settings.upload_chunk_size)
         temp_path = final_path.with_suffix(final_path.suffix + ".tmp")
         final_path.parent.mkdir(parents=True, exist_ok=True)
-        file_key = derive_file_key(load_master_key(self.settings), file_id) if encryption_enabled else None
+        file_key = None
+        stored_key_id = None
+        if encryption_enabled:
+            resolved_key = self._active_file_key()
+            if key_id and key_id != resolved_key.key_id:
+                service, owned_db = self._file_key_service()
+                try:
+                    key_version = service.repository.get_by_key_id(key_id)
+                    if key_version is None:
+                        raise RuntimeError(f"文件密钥版本不存在: {key_id}")
+                    raw_key = normalize_key_material(key_version.key_material)
+                finally:
+                    if owned_db is not None:
+                        owned_db.close()
+                file_key = derive_file_key(raw_key, file_id)
+                stored_key_id = key_id
+            else:
+                file_key = derive_file_key(resolved_key.key, file_id)
+                stored_key_id = resolved_key.key_id
 
         try:
             with temp_path.open("wb") as output:
@@ -248,13 +362,15 @@ class StorageService:
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise
+        return stored_key_id
 
     def iter_content_chunks(self, file_info: FileInfo) -> Iterator[bytes]:
         """根据文件元数据流式读取明文内容。"""
 
         path = self._absolute_object_path(file_info.storage_path)
         if file_info.encryption_enabled:
-            file_key = derive_file_key(load_master_key(self.settings), file_info.file_id)
+            resolved_key = self._file_key_for(file_info)
+            file_key = derive_file_key(resolved_key.key, file_info.file_id)
             yield from iter_decrypted_chunks(path, file_key, file_info.file_id)
             return
 
@@ -294,7 +410,8 @@ class StorageService:
         path: Path,
         content_range: ContentRange,
     ) -> Iterator[bytes]:
-        file_key = derive_file_key(load_master_key(self.settings), file_info.file_id)
+        resolved_key = self._file_key_for(file_info)
+        file_key = derive_file_key(resolved_key.key, file_info.file_id)
         with path.open("rb") as file_obj:
             header = file_obj.read(HEADER.size)
             magic, version, chunk_size = HEADER.unpack(header)

@@ -5,8 +5,15 @@ import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 
+import { filesApi } from '@/api/files'
 import FileUploadDialog from '@/components/FileUploadDialog.vue'
 import { useSettingsStore } from '@/stores/settingsStore'
+
+vi.mock('@/api/files', () => ({
+  filesApi: {
+    uploadFile: vi.fn()
+  }
+}))
 
 const source = readFileSync(
   resolve(process.cwd(), 'src/components/FileUploadDialog.vue'),
@@ -68,6 +75,7 @@ describe('FileUploadDialog source contract', () => {
           'el-icon': { template: '<span><slot /></span>' },
           'el-radio-button': { template: '<button><slot /></button>' },
           'el-radio-group': { template: '<div><slot /></div>' },
+          'el-switch': { template: '<button><slot /></button>' },
           'el-table': { template: '<div><slot /></div>' },
           'el-table-column': { template: '<div />' },
           'el-tag': { template: '<span><slot /></span>' }
@@ -90,5 +98,56 @@ describe('FileUploadDialog source contract', () => {
     expect(wrapper.text()).toContain('mobile-note.txt')
     expect(wrapper.text()).toContain('待上传')
     expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+  })
+
+  it('does not upload encrypted files before a key has been configured', async () => {
+    setActivePinia(createPinia())
+    const settingsStore = useSettingsStore()
+    settingsStore.initialized = true
+    settingsStore.settings.encryptionEnabled = true
+    settingsStore.settings.fileEncryption = {
+      encryption_enabled: true,
+      key_configured: false,
+      active_key_id: null,
+      active_key_status: null,
+      pending_rotation_count: 0
+    }
+
+    const wrapper = mount(FileUploadDialog, {
+      props: {
+        modelValue: true,
+        targetPathId: 'root',
+        targetFullPath: '/'
+      },
+      global: {
+        stubs: {
+          'el-button': { template: '<button @click="$emit(\'click\')"><slot /></button>' },
+          'el-dialog': dialogStub,
+          'el-empty': { template: '<div>上传队列为空</div>' },
+          'el-icon': { template: '<span><slot /></span>' },
+          'el-radio-button': { template: '<button><slot /></button>' },
+          'el-radio-group': { template: '<div><slot /></div>' },
+          'el-switch': { template: '<button><slot /></button>' },
+          'el-table': { template: '<div><slot /></div>' },
+          'el-table-column': { template: '<div />' },
+          'el-tag': { template: '<span><slot /></span>' }
+        }
+      }
+    })
+
+    const input = wrapper.find('input[type="file"]')
+    const file = new File(['secret'], 'secret.md', {
+      type: 'text/markdown',
+      lastModified: 1
+    })
+    Object.defineProperty(input.element, 'files', {
+      value: [file],
+      configurable: true
+    })
+    await input.trigger('change')
+
+    await wrapper.findAll('button').find((button) => button.text() === '开始上传')?.trigger('click')
+
+    expect(filesApi.uploadFile).not.toHaveBeenCalled()
   })
 })

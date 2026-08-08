@@ -12,6 +12,8 @@ const hiddenVerifyCurrentPassword = ref('')
 const hiddenVerifyNewPassword = ref('')
 const hiddenVerifyConfirmPassword = ref('')
 const savingHiddenVerifyPassword = ref(false)
+const fileEncryptionKey = ref('')
+const savingFileEncryption = ref(false)
 
 const providerTypeOptions: Array<{ label: string; value: AiProviderType }> = [
   { label: 'OpenAI Compatible', value: 'openai_compatible' },
@@ -22,6 +24,7 @@ const providerTypeOptions: Array<{ label: string; value: AiProviderType }> = [
 function cloneSettings(settings: SystemSettings): SystemSettings {
   return {
     ...settings,
+    fileEncryption: { ...settings.fileEncryption },
     aiProviders: settings.aiProviders.map((provider) => ({ ...provider, api_key: null }))
   }
 }
@@ -91,6 +94,54 @@ function handleProviderEnabledChange(provider: AiProviderConfig) {
 
 async function reloadSettings() {
   await settingsStore.loadSettings()
+}
+
+function generateFileEncryptionKey() {
+  const bytes = new Uint8Array(32)
+  globalThis.crypto.getRandomValues(bytes)
+  fileEncryptionKey.value = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+async function enableFileEncryption() {
+  const key = fileEncryptionKey.value.trim()
+  if (!key) {
+    ElMessage.warning('请输入文件加密 key')
+    return
+  }
+  savingFileEncryption.value = true
+  try {
+    await settingsStore.enableFileEncryption(key)
+    fileEncryptionKey.value = ''
+    ElMessage.success('文件本体加密已启用')
+  } finally {
+    savingFileEncryption.value = false
+  }
+}
+
+async function rotateFileEncryptionKey() {
+  const key = fileEncryptionKey.value.trim()
+  if (!key) {
+    ElMessage.warning('请输入新的文件加密 key')
+    return
+  }
+  savingFileEncryption.value = true
+  try {
+    await settingsStore.rotateFileEncryptionKey(key)
+    fileEncryptionKey.value = ''
+    ElMessage.success('文件加密 key 已换新，后台将继续轮转旧文件')
+  } finally {
+    savingFileEncryption.value = false
+  }
+}
+
+async function disableFileEncryption() {
+  savingFileEncryption.value = true
+  try {
+    await settingsStore.disableFileEncryption()
+    ElMessage.success('后续上传默认不加密')
+  } finally {
+    savingFileEncryption.value = false
+  }
 }
 
 async function saveHiddenVerifyPassword() {
@@ -239,8 +290,43 @@ async function saveSettings() {
       <div class="panel-body">
         <el-form label-width="180px">
           <el-form-item label="文件本体加密">
-            <el-switch v-model="form.encryptionEnabled" />
-            <span class="settings-view__help">上传入口会把该开关作为 encryption_enabled 提交给后端。</span>
+            <el-tag :type="settingsStore.settings.fileEncryption.encryption_enabled ? 'success' : 'info'" size="small">
+              {{ settingsStore.settings.fileEncryption.encryption_enabled ? '默认加密' : '默认不加密' }}
+            </el-tag>
+            <span class="settings-view__help">上传入口可按本次上传覆盖该默认值。</span>
+          </el-form-item>
+          <el-form-item label="当前 key">
+            <div class="settings-view__encryption-key">
+              <div class="settings-view__verify-row">
+                <el-tag :type="settingsStore.settings.fileEncryption.key_configured ? 'success' : 'danger'" size="small">
+                  {{ settingsStore.settings.fileEncryption.active_key_id || '未配置' }}
+                </el-tag>
+                <el-tag v-if="settingsStore.settings.fileEncryption.active_key_status" size="small">
+                  {{ settingsStore.settings.fileEncryption.active_key_status }}
+                </el-tag>
+                <span class="settings-view__help">
+                  待轮转 {{ settingsStore.settings.fileEncryption.pending_rotation_count }} 个文件
+                </span>
+              </div>
+              <div class="settings-view__verify-row">
+                <el-input
+                  v-model="fileEncryptionKey"
+                  type="password"
+                  show-password
+                  class="settings-view__verify-input"
+                  placeholder="输入新的文件加密 key"
+                />
+                <el-button :disabled="savingFileEncryption" @click="generateFileEncryptionKey">自动生成</el-button>
+                <el-button
+                  type="primary"
+                  :loading="savingFileEncryption"
+                  @click="settingsStore.settings.fileEncryption.key_configured ? rotateFileEncryptionKey() : enableFileEncryption()"
+                >
+                  {{ settingsStore.settings.fileEncryption.key_configured ? '换 key' : '启用加密' }}
+                </el-button>
+                <el-button :loading="savingFileEncryption" @click="disableFileEncryption">关闭默认加密</el-button>
+              </div>
+            </div>
           </el-form-item>
           <el-form-item label="TXT 转 Markdown">
             <el-switch v-model="form.autoConvertTxtToMd" />
@@ -418,6 +504,13 @@ async function saveSettings() {
   gap: 8px;
   width: 100%;
   max-width: 620px;
+}
+
+.settings-view__encryption-key {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  max-width: 760px;
 }
 
 .settings-view__verify-row {

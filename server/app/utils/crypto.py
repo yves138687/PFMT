@@ -1,7 +1,7 @@
 import base64
-import hmac
 import hashlib
 import os
+import secrets
 import struct
 from collections.abc import Iterator
 from pathlib import Path
@@ -9,8 +9,6 @@ from pathlib import Path
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-
-from app.core.config import Settings
 
 
 MAGIC = b"PFMTENC1"
@@ -20,21 +18,20 @@ KEY_WRAP_VERSION = "aesgcm-chunked-v1"
 STORAGE_NAME_VERSION = "v1"
 
 
-def load_master_key(settings: Settings) -> bytes:
-    """加载文件加密主密钥；开发缺省值只用于本地验证。"""
+def normalize_key_material(raw_value: str) -> bytes:
+    """将配置里的密钥材料规范化为 32 字节密钥。"""
 
-    if settings.file_master_key:
-        raw_value = settings.file_master_key.strip()
-        padded = raw_value + "=" * (-len(raw_value) % 4)
-        try:
-            decoded = base64.urlsafe_b64decode(padded.encode("utf-8"))
-            if len(decoded) == 32:
-                return decoded
-        except ValueError:
-            pass
-        return hashlib.sha256(raw_value.encode("utf-8")).digest()
-
-    return hashlib.sha256(settings.effective_jwt_secret.encode("utf-8")).digest()
+    normalized = raw_value.strip()
+    if not normalized:
+        raise RuntimeError("文件加密密钥未配置")
+    padded = normalized + "=" * (-len(normalized) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(padded.encode("utf-8"))
+        if len(decoded) == 32:
+            return decoded
+    except ValueError:
+        pass
+    return hashlib.sha256(normalized.encode("utf-8")).digest()
 
 
 def derive_file_key(master_key: bytes, file_id: str) -> bytes:
@@ -49,19 +46,16 @@ def derive_file_key(master_key: bytes, file_id: str) -> bytes:
     return hkdf.derive(master_key)
 
 
-def generate_storage_name(settings: Settings, *, kind: str, object_id: str) -> str:
+def generate_storage_name(_settings, *, kind: str, object_id: str) -> str:
     """生成固定短度的本地存储名，避免明文名或长密文撑爆 Windows 路径。"""
 
     if kind not in {"directory", "file"}:
         raise ValueError("不支持的存储名称类型")
 
     prefix = "d1" if kind == "directory" else "f1"
-    digest = hmac.new(
-        load_master_key(settings),
-        f"{STORAGE_NAME_VERSION}:{kind}:{object_id}".encode("utf-8"),
-        hashlib.sha256,
-    ).digest()
-    token = base64.urlsafe_b64encode(digest[:18]).decode("ascii").rstrip("=")
+    digest = hashlib.sha256(f"{STORAGE_NAME_VERSION}:{kind}:{object_id}".encode("utf-8")).digest()
+    random_bytes = secrets.token_bytes(8)
+    token = base64.urlsafe_b64encode(digest[:8] + random_bytes).decode("ascii").rstrip("=")
     suffix = ".pfmt" if kind == "file" else ""
     return f"{prefix}_{token}{suffix}"
 

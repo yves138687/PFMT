@@ -88,6 +88,62 @@ def test_hidden_path_requires_session_switch(
         assert hidden_path.path_type == "normal"
 
 
+def test_hidden_path_write_operations_require_session_visibility(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏目录写操作必须和读取一样受当前会话可见性约束。"""
+
+    hidden = client.post(
+        "/api/v1/paths",
+        headers=auth_headers,
+        json={"path_name": "Hidden Ops", "parent_path_id": "root", "is_hidden": True},
+    ).json()
+    visible = client.post(
+        "/api/v1/paths",
+        headers=auth_headers,
+        json={"path_name": "Visible Ops", "parent_path_id": "root"},
+    ).json()
+
+    create_child = client.post(
+        "/api/v1/paths",
+        headers=auth_headers,
+        json={"path_name": "Child", "parent_path_id": hidden["path_id"]},
+    )
+    assert create_child.status_code == 404
+
+    update_hidden = client.patch(
+        f"/api/v1/paths/{hidden['path_id']}",
+        headers=auth_headers,
+        json={"description": "blocked"},
+    )
+    assert update_hidden.status_code == 404
+
+    move_to_hidden = client.patch(
+        f"/api/v1/paths/{visible['path_id']}/move",
+        headers=auth_headers,
+        json={"parent_path_id": hidden["path_id"]},
+    )
+    assert move_to_hidden.status_code == 404
+
+    delete_hidden = client.delete(f"/api/v1/paths/{hidden['path_id']}", headers=auth_headers)
+    assert delete_hidden.status_code == 404
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    allowed_update = client.patch(
+        f"/api/v1/paths/{hidden['path_id']}",
+        headers=auth_headers,
+        json={"description": "allowed"},
+    )
+    assert allowed_update.status_code == 200
+    assert allowed_update.json()["description"] == "allowed"
+
+
 def test_path_uses_short_physical_storage_name(client: TestClient, auth_headers: dict[str, str]) -> None:
     """目录真实存储名固定短度，不随展示名变长，也不暴露明文。"""
 
@@ -261,15 +317,38 @@ def test_path_delete_removes_subtree_files_and_frees_name(
         assert deleted_file.status == "deleted"
 
 
-def test_startup_fails_when_storage_root_is_missing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """启动时存储根路径缺失会阻断，避免静默创建新的 SQLite。"""
+def test_startup_creates_missing_storage_root(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """启动时指定存储根路径缺失时，系统会自动创建目录。"""
 
     storage_root = tmp_path / "missing-storage"
     db_path = tmp_path / "pfmt.sqlite3"
     monkeypatch.setenv("PFMT_STORAGE_ROOT", storage_root.as_posix())
     monkeypatch.setenv("PFMT_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("PFMT_JWT_SECRET_KEY", "test-jwt-secret-with-at-least-32-bytes")
-    monkeypatch.setenv("PFMT_FILE_MASTER_KEY", "test-file-master-key")
+    get_settings.cache_clear()
+    reset_database_state()
+
+    try:
+        app = create_app()
+        with TestClient(app) as test_client:
+            response = test_client.get("/health")
+        assert response.status_code == 200
+        assert storage_root.is_dir()
+        assert db_path.exists()
+    finally:
+        reset_database_state()
+        get_settings.cache_clear()
+
+
+def test_startup_fails_when_storage_root_is_a_file(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """存储根路径已存在但不是目录时仍阻断启动。"""
+
+    storage_root = tmp_path / "storage-file"
+    storage_root.write_text("not a directory", encoding="utf-8")
+    db_path = tmp_path / "pfmt.sqlite3"
+    monkeypatch.setenv("PFMT_STORAGE_ROOT", storage_root.as_posix())
+    monkeypatch.setenv("PFMT_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("PFMT_JWT_SECRET_KEY", "test-jwt-secret-with-at-least-32-bytes")
     get_settings.cache_clear()
     reset_database_state()
 
@@ -278,7 +357,6 @@ def test_startup_fails_when_storage_root_is_missing(tmp_path, monkeypatch: pytes
         with pytest.raises(RuntimeError):
             with TestClient(app):
                 pass
-        assert not db_path.exists()
     finally:
         reset_database_state()
         get_settings.cache_clear()

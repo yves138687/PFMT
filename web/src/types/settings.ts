@@ -69,6 +69,15 @@ export interface SystemSettings {
   aiProviders: AiProviderConfig[]
   activeAiProviderId: string | null
   backupGitEnabled: boolean
+  fileEncryption: FileEncryptionStatus
+}
+
+export interface FileEncryptionStatus {
+  encryption_enabled: boolean
+  key_configured: boolean
+  active_key_id: string | null
+  active_key_status: 'expired' | 'active_rotating' | 'active_completed' | null
+  pending_rotation_count: number
 }
 
 /** 前端在后端配置尚未加载时使用的默认配置。 */
@@ -83,5 +92,12 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   aiFeatureEnabled: false,
   aiProviders: [],
   activeAiProviderId: null,
-  backupGitEnabled: false
+  backupGitEnabled: false,
+  fileEncryption: {
+    encryption_enabled: true,
+    key_configured: false,
+    active_key_id: null,
+    active_key_status: null,
+    pending_rotation_count: 0
+  }
 }

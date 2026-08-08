@@ -50,11 +50,12 @@ class PathService:
         self,
         *,
         payload: PathCreateRequest,
-        user_id: str,
+        current_user: UserAccount,
         client_ip: str | None,
     ) -> PathRead:
         """创建目录并写入审计日志。"""
 
+        user_id = current_user.user_id
         parent = self.repository.get_active_by_path_id(payload.parent_path_id)
         if parent is None:
             self.audit_service.record(
@@ -66,6 +67,15 @@ class PathService:
                 client_ip=client_ip,
             )
             self.db.commit()
+            raise NotFoundError("父目录不存在")
+        if not self._can_access_path(parent, current_user=current_user):
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=payload.parent_path_id,
+                action_type="create_path",
+                reason="hidden_path_not_allowed",
+                client_ip=client_ip,
+            )
             raise NotFoundError("父目录不存在")
 
         full_path = self._join_full_path(parent.full_path, payload.path_name)
@@ -128,12 +138,13 @@ class PathService:
         *,
         path_id: str,
         payload: PathMoveRequest,
-        user_id: str,
+        current_user: UserAccount,
         client_ip: str | None,
     ) -> PathRead:
         """移动目录到新的父目录，并同步更新子目录冗余 full_path。"""
 
         action_type = "move_path"
+        user_id = current_user.user_id
         path = self.repository.get_active_by_path_id(path_id)
         if path is None:
             self._record_path_action_failure(
@@ -141,6 +152,15 @@ class PathService:
                 path_id=path_id,
                 action_type=action_type,
                 reason="path_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目录不存在")
+        if not self._can_access_path(path, current_user=current_user):
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="hidden_path_not_allowed",
                 client_ip=client_ip,
             )
             raise NotFoundError("目录不存在")
@@ -162,6 +182,15 @@ class PathService:
                 path_id=path_id,
                 action_type=action_type,
                 reason="parent_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目标目录不存在")
+        if not self._can_access_path(parent, current_user=current_user):
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=payload.parent_path_id,
+                action_type=action_type,
+                reason="hidden_target_path_not_allowed",
                 client_ip=client_ip,
             )
             raise NotFoundError("目标目录不存在")
@@ -255,12 +284,13 @@ class PathService:
         *,
         path_id: str,
         payload: PathUpdateRequest,
-        user_id: str,
+        current_user: UserAccount,
         client_ip: str | None,
     ) -> PathRead:
         """更新目录名称、描述和隐藏状态，并同步子目录 full_path。"""
 
         action_type = "update_path"
+        user_id = current_user.user_id
         path = self.repository.get_active_by_path_id(path_id)
         if path is None:
             self._record_path_action_failure(
@@ -268,6 +298,15 @@ class PathService:
                 path_id=path_id,
                 action_type=action_type,
                 reason="path_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目录不存在")
+        if not self._can_access_path(path, current_user=current_user):
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="hidden_path_not_allowed",
                 client_ip=client_ip,
             )
             raise NotFoundError("目录不存在")
@@ -332,12 +371,13 @@ class PathService:
         self,
         *,
         path_id: str,
-        user_id: str,
+        current_user: UserAccount,
         client_ip: str | None,
     ) -> None:
         """软删除目录、子目录和其中的文件，并清理文件对象。"""
 
         action_type = "delete_path"
+        user_id = current_user.user_id
         path = self.repository.get_active_by_path_id(path_id)
         if path is None:
             self._record_path_action_failure(
@@ -345,6 +385,15 @@ class PathService:
                 path_id=path_id,
                 action_type=action_type,
                 reason="path_not_found",
+                client_ip=client_ip,
+            )
+            raise NotFoundError("目录不存在")
+        if not self._can_access_path(path, current_user=current_user):
+            self._record_path_action_failure(
+                user_id=user_id,
+                path_id=path_id,
+                action_type=action_type,
+                reason="hidden_path_not_allowed",
                 client_ip=client_ip,
             )
             raise NotFoundError("目录不存在")
@@ -397,6 +446,25 @@ class PathService:
         feature_enabled = self.setting_service.get_bool("hidden.feature_enabled", True)
         session_enabled = bool(getattr(current_user, "_pfmt_show_hidden_enabled", False))
         return feature_enabled and session_enabled
+
+    def _can_access_path(self, path: FilePath, *, current_user: UserAccount | None) -> bool:
+        """校验目录及祖先目录是否对当前会话可见。"""
+
+        if self._include_hidden(current_user=current_user):
+            return True
+        if path.is_hidden:
+            return False
+
+        paths = {item.path_id: item for item in self.repository.list_active(include_hidden=True)}
+        parent_id = path.parent_path_id
+        while parent_id:
+            parent = paths.get(parent_id)
+            if parent is None:
+                return False
+            if parent.is_hidden:
+                return False
+            parent_id = parent.parent_path_id
+        return True
 
     @staticmethod
     def _join_full_path(parent_full_path: str, path_name: str) -> str:

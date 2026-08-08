@@ -140,6 +140,7 @@ class FileRepository:
         size_bytes: int,
         checksum_sha256: str,
         key_wrap_version: str | None,
+        key_id: str | None,
         user_id: str,
     ) -> None:
         """更新文件本体变化后的元数据。"""
@@ -147,6 +148,7 @@ class FileRepository:
         file_info.size_bytes = size_bytes
         file_info.checksum_sha256 = checksum_sha256
         file_info.key_wrap_version = key_wrap_version
+        file_info.key_id = key_id
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 
@@ -157,10 +159,13 @@ class FileRepository:
         mime_type: str | None,
         file_ext: str | None,
         file_type: str,
+        storage_object_name: str,
+        storage_path: str,
         size_bytes: int,
         checksum_sha256: str,
         encryption_enabled: bool,
         key_wrap_version: str | None,
+        key_id: str | None,
         is_hidden: bool,
         user_id: str,
     ) -> None:
@@ -169,10 +174,13 @@ class FileRepository:
         file_info.mime_type = mime_type
         file_info.file_ext = file_ext
         file_info.file_type = file_type
+        file_info.storage_object_name = storage_object_name
+        file_info.storage_path = storage_path
         file_info.size_bytes = size_bytes
         file_info.checksum_sha256 = checksum_sha256
         file_info.encryption_enabled = encryption_enabled
         file_info.key_wrap_version = key_wrap_version
+        file_info.key_id = key_id
         file_info.is_hidden = is_hidden
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()

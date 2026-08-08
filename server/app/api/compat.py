@@ -262,7 +262,7 @@ def create_path_compat(
 
     return PathService(db).create_path(
         payload=payload,
-        user_id=current_user.user_id,
+        current_user=current_user,
         client_ip=client_ip,
     )
 
@@ -295,7 +295,7 @@ def create_file_path_compat(
             is_hidden=payload.is_hidden,
             description=payload.description,
         ),
-        user_id=current_user.user_id,
+        current_user=current_user,
         client_ip=client_ip,
     )
     return _compat_path_read(created)

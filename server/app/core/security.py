@@ -63,3 +63,15 @@ def decode_access_token(settings: Settings, token: str) -> dict[str, Any]:
     """解析 JWT；调用方负责把异常转换为认证失败。"""
 
     return jwt.decode(token, settings.effective_jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+def validate_startup_security(settings: Settings) -> None:
+    """启动期安全校验，避免生产或加密场景使用隐式弱配置。"""
+
+    if not settings.is_production:
+        return
+
+    if settings.effective_jwt_secret == "pfmt-dev-change-me" or len(settings.effective_jwt_secret) < 32:
+        raise RuntimeError("生产环境必须配置不少于 32 字符的 PFMT_JWT_SECRET_KEY")
+    if settings.admin_password == "admin123456" or len(settings.admin_password) < 12:
+        raise RuntimeError("生产环境必须配置非默认且不少于 12 字符的 PFMT_ADMIN_PASSWORD")

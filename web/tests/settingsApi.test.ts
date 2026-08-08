@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { normalizeSystemSettings, settingsApi, systemSettingsToDto } from '@/api/settings'
+import { DEFAULT_SYSTEM_SETTINGS } from '@/types/settings'
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -57,6 +58,7 @@ describe('settingsApi AI settings', () => {
 
   it('serializes AI providers and the active provider id', () => {
     const dto = systemSettingsToDto({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -205,6 +207,7 @@ describe('settingsApi AI settings', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const saved = await settingsApi.updateSettings({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -261,6 +264,7 @@ describe('settingsApi hidden content verification', () => {
 
   it('does not send the verification code hash key when saving settings', () => {
     const dto = systemSettingsToDto({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -280,5 +284,30 @@ describe('settingsApi hidden content verification', () => {
 
     const required = dto.find((item) => item.setting_key === 'hidden.verify_password_required')
     expect(required?.setting_value).toBe('true')
+  })
+})
+
+
+describe('settingsApi file encryption key management', () => {
+  it('rotates file encryption keys through the dedicated endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        encryption_enabled: true,
+        key_configured: true,
+        active_key_id: 'key_20260807153022_ab12cd',
+        active_key_status: 'active_rotating',
+        pending_rotation_count: 3
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await settingsApi.rotateFileEncryptionKey('new-secret-key')
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/settings/file-encryption/rotate')
+    expect(JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      key: 'new-secret-key'
+    })
+    expect(status.active_key_id).toBe('key_20260807153022_ab12cd')
+    expect(status.pending_rotation_count).toBe(3)
   })
 })

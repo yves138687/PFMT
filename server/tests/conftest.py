@@ -5,9 +5,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
-from app.core.database import reset_database_state
+from app.core.database import get_engine, reset_database_state
 from app.main import create_app
 from app.services.auth_service import AuthService
+from app.services.file_key_service import FileKeyService
+from sqlalchemy.orm import Session
 
 
 @pytest.fixture()
@@ -20,7 +22,6 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
     monkeypatch.setenv("PFMT_DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("PFMT_STORAGE_ROOT", storage_root.as_posix())
     monkeypatch.setenv("PFMT_JWT_SECRET_KEY", "test-jwt-secret-with-at-least-32-bytes")
-    monkeypatch.setenv("PFMT_FILE_MASTER_KEY", "test-file-master-key")
     monkeypatch.setenv("PFMT_ADMIN_USERNAME", "admin")
     monkeypatch.setenv("PFMT_ADMIN_PASSWORD", "admin123456")
 
@@ -34,6 +35,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[TestCli
     AuthService._hidden_verify_locks.clear()
     app = create_app()
     with TestClient(app) as test_client:
+        with Session(get_engine()) as db:
+            FileKeyService(db, get_settings()).enable("test-file-master-key")
         yield test_client
 
     reset_database_state()

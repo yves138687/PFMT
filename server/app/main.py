@@ -12,6 +12,8 @@ from app.core.database import init_database
 from app.core.exceptions import AppError
 from app.core.logging import RequestLoggingMiddleware, configure_logging
 from app.core.seed import seed_application_data
+from app.core.security import validate_startup_security
+from app.services.file_key_service import FileKeyRotationService
 from app.services.storage_integrity_service import StorageIntegrityService
 
 
@@ -20,11 +22,13 @@ async def lifespan(_app: FastAPI):
     """应用生命周期：启动时建表并 seed 第一阶段默认数据。"""
 
     settings = get_settings()
+    validate_startup_security(settings)
     storage_integrity = StorageIntegrityService(settings)
     storage_integrity.verify_storage_root()
     init_database(settings)
     seed_application_data(settings)
     storage_integrity.verify_inventory()
+    FileKeyRotationService(settings).start_once()
     logging.getLogger("pfmt.app").info("PFMT 后端启动完成")
     yield
 

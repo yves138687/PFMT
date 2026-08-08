@@ -99,6 +99,7 @@ class FileInfo(Base):
     checksum_sha256: Mapped[str | None] = mapped_column(String(128))
     encryption_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     key_wrap_version: Mapped[str | None] = mapped_column(String(64))
+    key_id: Mapped[str | None] = mapped_column(String(64))
     remark: Mapped[str | None] = mapped_column(Text)
     summary_content: Mapped[str | None] = mapped_column(Text)
     summary_source: Mapped[str | None] = mapped_column(String(32))

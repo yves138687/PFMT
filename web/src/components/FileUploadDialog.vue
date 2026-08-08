@@ -34,13 +34,20 @@ const selectedFiles = ref<SelectedUploadFile[]>([])
 const uploading = ref(false)
 const dragActive = ref(false)
 const conflictStrategy = ref<'rename' | 'overwrite'>('rename')
+const uploadEncryptionEnabled = ref(settingsStore.encryptionEnabled)
 let uploadUidSeed = 0
 
 const visible = computed({
   get: () => props.modelValue,
   set: (value) => emit('update:modelValue', value)
 })
-const encryptionText = computed(() => (settingsStore.encryptionEnabled ? '已启用文件本体加密' : '未启用文件本体加密'))
+const encryptionText = computed(() => (settingsStore.encryptionEnabled ? '默认加密' : '默认不加密'))
+const encryptionKeyConfigured = computed(() => settingsStore.settings.fileEncryption.key_configured)
+const encryptionKeyText = computed(() =>
+  encryptionKeyConfigured.value
+    ? `当前 key：${settingsStore.settings.fileEncryption.active_key_id ?? '已配置'}`
+    : '未配置加密 key'
+)
 const fileInputId = createUploadId('pfmt-file-upload')
 const directoryInputId = createUploadId('pfmt-directory-upload')
 const txtConvertText = computed(() => (settingsStore.autoConvertTxtToMd ? 'TXT 将自动转为 Markdown' : 'TXT 保持原格式'))
@@ -133,6 +140,10 @@ async function uploadAll() {
     ElMessage.warning('请先选择要上传的文件')
     return
   }
+  if (uploadEncryptionEnabled.value && !encryptionKeyConfigured.value) {
+    ElMessage.warning('请先到系统配置中设置文件加密密钥')
+    return
+  }
 
   uploading.value = true
   try {
@@ -147,7 +158,7 @@ async function uploadAll() {
           file: item.file,
           pathId: props.targetPathId,
           relativePath: item.relativePath,
-          encryptionEnabled: settingsStore.encryptionEnabled,
+          encryptionEnabled: uploadEncryptionEnabled.value,
           conflictStrategy: conflictStrategy.value
         })
         item.status = 'success'
@@ -171,6 +182,18 @@ watch(
     if (value && !settingsStore.initialized) {
       await settingsStore.loadSettings()
     }
+    if (value) {
+      uploadEncryptionEnabled.value = settingsStore.encryptionEnabled
+    }
+  }
+)
+
+watch(
+  () => settingsStore.encryptionEnabled,
+  (value) => {
+    if (!visible.value || !selectedFiles.value.length) {
+      uploadEncryptionEnabled.value = value
+    }
   }
 )
 </script>
@@ -188,7 +211,18 @@ watch(
     <div class="file-upload-dialog__meta">
       <span>上传到：{{ targetFullPath }}</span>
       <el-tag :type="settingsStore.encryptionEnabled ? 'success' : 'warning'">{{ encryptionText }}</el-tag>
+      <el-tag :type="encryptionKeyConfigured ? 'success' : 'danger'">{{ encryptionKeyText }}</el-tag>
       <el-tag :type="settingsStore.autoConvertTxtToMd ? 'success' : 'info'">{{ txtConvertText }}</el-tag>
+    </div>
+
+    <div class="file-upload-dialog__encryption">
+      <span>本次上传：</span>
+      <el-switch
+        v-model="uploadEncryptionEnabled"
+        :disabled="uploading"
+        active-text="加密"
+        inactive-text="不加密"
+      />
     </div>
 
     <div class="file-upload-dialog__conflict">
@@ -328,6 +362,15 @@ watch(
 }
 
 .file-upload-dialog__conflict {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: var(--pfmt-text-muted);
+}
+
+.file-upload-dialog__encryption {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -504,6 +547,11 @@ watch(
   }
 
   .file-upload-dialog__conflict {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .file-upload-dialog__encryption {
     align-items: flex-start;
     flex-direction: column;
   }

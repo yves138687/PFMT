@@ -303,7 +303,7 @@ pwsh ./scripts/dev/start_web.ps1
 - 用户名：`admin`
 - 密码：`admin123456`
 
-生产或长期自用前必须在本地 `.env` 中替换 `PFMT_ADMIN_PASSWORD`、`PFMT_JWT_SECRET_KEY`、`PFMT_FILE_MASTER_KEY`。其中 `PFMT_FILE_MASTER_KEY` 一旦用于加密文件，后续必须保持稳定，否则旧文件无法解密。
+生产或长期自用前必须在本地 `.env` 中替换 `PFMT_ADMIN_PASSWORD`、`PFMT_JWT_SECRET_KEY`。文件本体加密 key 不再写入环境变量，请登录后在系统配置页创建或轮转。
 
 ### 测试与自检
 

@@ -33,6 +33,8 @@ replay_pid*
 .env
 .env.*
 !.env.example
+# Production secrets are generated locally and must never be committed.
+/.env.production
 
 # Python development artifacts
 __pycache__/

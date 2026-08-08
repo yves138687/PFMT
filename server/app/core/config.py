@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = "admin123456"
     admin_display_name: str = "管理员"
-    file_master_key: str | None = None
     upload_chunk_size: int = 1024 * 1024
     embed_token_minutes: int = 30
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
@@ -42,6 +41,12 @@ class Settings(BaseSettings):
     show_hidden_by_default: bool = False
     ai_enabled: bool = False
     backup_enabled: bool = False
+
+    @property
+    def is_production(self) -> bool:
+        """是否按生产安全规则运行。"""
+
+        return self.env.strip().lower() in {"prod", "production"}
 
     @property
     def effective_jwt_secret(self) -> str:

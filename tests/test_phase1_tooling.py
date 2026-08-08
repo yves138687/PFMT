@@ -88,7 +88,8 @@ def test_env_example_contains_only_placeholders() -> None:
     env_text = read_text(".env.example")
 
     assert "PFMT_JWT_SECRET_KEY=replace_with_" in env_text
-    assert "PFMT_FILE_MASTER_KEY=replace_with_" in env_text
+    assert "PFMT_FILE_MASTER_KEY" not in env_text
+    assert "PFMT_KEY_ENCRYPTION_KEY" not in env_text
     assert "PFMT_WEB_HOST=0.0.0.0" in env_text
     assert "PFMT_STORAGE_ROOT=./storage" in env_text
     assert "# PFMT_DATABASE_URL=sqlite:///./storage/pfmt.sqlite3" in env_text

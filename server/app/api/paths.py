@@ -32,7 +32,7 @@ def create_path(
 
     return PathService(db).create_path(
         payload=payload,
-        user_id=current_user.user_id,
+        current_user=current_user,
         client_ip=client_ip,
     )
 
@@ -50,7 +50,7 @@ def move_path(
     return PathService(db).move_path(
         path_id=path_id,
         payload=payload,
-        user_id=current_user.user_id,
+        current_user=current_user,
         client_ip=client_ip,
     )
 
@@ -68,7 +68,7 @@ def update_path(
     return PathService(db).update_path(
         path_id=path_id,
         payload=payload,
-        user_id=current_user.user_id,
+        current_user=current_user,
         client_ip=client_ip,
     )
 
@@ -84,6 +84,6 @@ def delete_path(
 
     PathService(db).delete_path(
         path_id=path_id,
-        user_id=current_user.user_id,
+        current_user=current_user,
         client_ip=client_ip,
     )

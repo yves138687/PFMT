@@ -334,6 +334,7 @@ class FileService:
         )
 
         if existing_file is not None and conflict_strategy == "overwrite":
+            old_storage_path = existing_file.storage_path
             try:
                 stored_object = await self.storage_service.save_upload_file(
                     upload_file=upload_file,
@@ -346,10 +347,13 @@ class FileService:
                     mime_type=mime_type,
                     file_ext=file_ext,
                     file_type=file_type,
+                    storage_object_name=stored_object.storage_object_name,
+                    storage_path=stored_object.storage_path,
                     size_bytes=stored_object.size_bytes,
                     checksum_sha256=stored_object.checksum_sha256,
                     encryption_enabled=should_encrypt,
                     key_wrap_version=stored_object.key_wrap_version,
+                    key_id=stored_object.key_id,
                     is_hidden=is_hidden,
                     user_id=current_user.user_id,
                 )
@@ -371,6 +375,8 @@ class FileService:
                 )
                 self.db.commit()
                 self.db.refresh(existing_file)
+                if old_storage_path != stored_object.storage_path:
+                    self.storage_service.delete_object(old_storage_path)
                 self.logger.info(
                     "文件覆盖上传完成",
                     extra={
@@ -412,6 +418,7 @@ class FileService:
                 checksum_sha256=stored_object.checksum_sha256,
                 encryption_enabled=should_encrypt,
                 key_wrap_version=stored_object.key_wrap_version,
+                key_id=stored_object.key_id,
                 is_hidden=is_hidden,
                 visibility_type="normal",
                 created_by=current_user.user_id,
@@ -689,6 +696,7 @@ class FileService:
                 size_bytes=stored_object.size_bytes,
                 checksum_sha256=stored_object.checksum_sha256,
                 key_wrap_version=stored_object.key_wrap_version,
+                key_id=stored_object.key_id,
                 user_id=current_user.user_id,
             )
             self.audit_service.record(
@@ -1791,6 +1799,7 @@ class FileService:
                 checksum_sha256=stored_object.checksum_sha256,
                 encryption_enabled=should_encrypt,
                 key_wrap_version=stored_object.key_wrap_version,
+                key_id=stored_object.key_id,
                 remark=source_file.remark if source_file else None,
                 summary_content=source_file.summary_content if source_file else None,
                 summary_source=source_file.summary_source if source_file else None,

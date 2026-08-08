@@ -106,6 +106,11 @@ def _patch_sqlite_schema(engine: Engine) -> None:
             connection.execute(text("ALTER TABLE file_info ADD COLUMN summary_source VARCHAR(32)"))
         if columns and "summary_updated_at" not in columns:
             connection.execute(text("ALTER TABLE file_info ADD COLUMN summary_updated_at DATETIME"))
+        if columns and "key_id" not in columns:
+            connection.execute(text("ALTER TABLE file_info ADD COLUMN key_id VARCHAR(64)"))
+        connection.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_file_info_encryption_key_status ON file_info(encryption_enabled, key_id, status)")
+        )
 
         session_columns = {
             row[1]
@@ -164,6 +169,29 @@ def _patch_sqlite_schema(engine: Engine) -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_tag_status ON file_tag(status)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_tag_rel_file_id ON file_tag_rel(file_id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_tag_rel_tag_id ON file_tag_rel(tag_id)"))
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS file_key (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key_id VARCHAR(64) NOT NULL,
+                    key_material TEXT NOT NULL,
+                    key_hash VARCHAR(128) NOT NULL,
+                    status VARCHAR(32) NOT NULL DEFAULT 'active_completed',
+                    is_active BOOLEAN NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL,
+                    activated_at DATETIME,
+                    completed_at DATETIME,
+                    expired_at DATETIME,
+                    CONSTRAINT ck_file_key_status CHECK (status IN ('expired', 'active_rotating', 'active_completed')),
+                    CONSTRAINT uq_file_key_key_id UNIQUE (key_id)
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_file_key_key_id ON file_key(key_id)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_file_key_one_active ON file_key(is_active) WHERE is_active = 1"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_key_active ON file_key(is_active, status)"))
 
 
 def reset_database_state() -> None:

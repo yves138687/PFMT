@@ -13,6 +13,8 @@ from app.core.config import get_settings
 from app.core.database import get_engine
 from app.models.audit import AuditLog
 from app.models.file import FileInfo, FileTag, FileTagRel
+from app.models.system import FileKeyVersion
+from app.services.file_key_service import FileKeyRotationService, FileKeyService
 from app.services.storage_integrity_service import StorageIntegrityService
 from app.services.storage_service import WINDOWS_MAX_COMPONENT_CHARS, WINDOWS_SAFE_MAX_PATH_CHARS
 
@@ -48,6 +50,128 @@ def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers
         assert len(str(object_path)) <= WINDOWS_SAFE_MAX_PATH_CHARS
         stored_bytes = object_path.read_bytes()
         assert payload not in stored_bytes
+
+
+def test_upload_defaults_to_plaintext_when_system_encryption_is_disabled(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """系统默认加密关闭且上传未显式选择加密时，文件明文保存且不记录 key_id。"""
+
+    client.put(
+        "/api/v1/settings/storage.encryption_enabled",
+        headers=auth_headers,
+        json={"setting_value": False},
+    )
+
+    response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("plain.md", b"# Plain\nnot encrypted", "text/markdown")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["encryption_enabled"] is False
+
+    with Session(get_engine()) as db:
+        file_info = db.execute(select(FileInfo).where(FileInfo.file_id == body["file_id"])).scalar_one()
+        assert file_info.key_id is None
+        stored_bytes = (get_settings().storage_root_path / Path(file_info.storage_path)).read_bytes()
+        assert b"# Plain\nnot encrypted" in stored_bytes
+
+
+def test_upload_requires_configured_key_when_explicit_encryption_is_requested(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """上传显式选择加密时，后端必须校验当前 active key 是否存在。"""
+
+    client.put(
+        "/api/v1/settings/storage.encryption_enabled",
+        headers=auth_headers,
+        json={"setting_value": False},
+    )
+    with Session(get_engine()) as db:
+        db.query(FileKeyVersion).delete()
+        db.commit()
+
+    response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("needs-key.md", b"# Needs key", "text/markdown")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "file_encryption_key_required"
+
+
+def test_file_encryption_key_is_separate_and_rotates(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """文件使用独立 key_id；轮转后旧密钥过期且文件仍可读取。"""
+
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("rotate.md", b"# Rotating\nsecret", "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+    file_id = upload_response.json()["file_id"]
+
+    settings = get_settings()
+    with Session(get_engine()) as db:
+        file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
+        original_key_id = file_info.key_id
+        assert file_info.key_id == original_key_id
+        assert file_info.key_id != settings.effective_jwt_secret
+
+        rotated = FileKeyService(db, settings).rotate("rotated-file-master-key")
+        rotated_key_id = rotated.key_id
+
+    FileKeyRotationService(settings).rotate_pending_files()
+
+    markdown_response = client.get(f"/api/files/{file_id}/markdown", headers=auth_headers)
+    assert markdown_response.status_code == 200
+    assert markdown_response.json()["content"] == "# Rotating\nsecret"
+
+    with Session(get_engine()) as db:
+        file_info = db.execute(select(FileInfo).where(FileInfo.file_id == file_id)).scalar_one()
+        assert file_info.key_id == rotated_key_id
+        old_key = db.execute(select(FileKeyVersion).where(FileKeyVersion.key_id == original_key_id)).scalar_one_or_none()
+        assert old_key is not None
+        assert old_key.status == "expired"
+        active_key = db.execute(select(FileKeyVersion).where(FileKeyVersion.key_id == rotated_key_id)).scalar_one()
+        assert active_key.is_active is True
+        assert active_key.status == "active_completed"
+
+
+def test_file_encryption_status_api_rotates_key_without_exposing_material(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """密钥接口只接受 key 字符串，由系统生成 key_id 并隐藏密钥材料。"""
+
+    disable_response = client.post("/api/v1/settings/file-encryption/disable", headers=auth_headers)
+    assert disable_response.status_code == 200
+    assert disable_response.json()["encryption_enabled"] is False
+
+    rotate_response = client.post(
+        "/api/v1/settings/file-encryption/rotate",
+        headers=auth_headers,
+        json={"key": "new-ui-provided-key"},
+    )
+
+    assert rotate_response.status_code == 200
+    body = rotate_response.json()
+    assert body["key_configured"] is True
+    assert body["active_key_id"].startswith("key_")
+    assert "new-ui-provided-key" not in str(body)
+
+    with Session(get_engine()) as db:
+        active_keys = db.execute(select(FileKeyVersion).where(FileKeyVersion.is_active.is_(True))).scalars().all()
+        assert len(active_keys) == 1
+        assert active_keys[0].key_material == "new-ui-provided-key"
 
 
 def test_uploaded_markdown_can_be_read_after_decryption(

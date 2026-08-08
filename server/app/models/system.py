@@ -33,3 +33,27 @@ class SystemSetting(Base):
     updated_by: Mapped[str | None] = mapped_column(
         String(64), ForeignKey("user_account.user_id", onupdate="CASCADE", ondelete="SET NULL")
     )
+
+
+class FileKeyVersion(Base):
+    """文件加密 key；key_id 由系统生成，密钥材料保存在数据库中且不回显。"""
+
+    __tablename__ = "file_key"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('expired', 'active_rotating', 'active_completed')",
+            name="ck_file_key_status",
+        ),
+        Index("idx_file_key_active", "is_active", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    key_material: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active_completed")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_utc)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    expired_at: Mapped[datetime | None] = mapped_column(DateTime)

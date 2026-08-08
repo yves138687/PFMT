@@ -9,6 +9,7 @@ import { DEFAULT_SYSTEM_SETTINGS } from '@/types/settings'
 function cloneSettings(settings: SystemSettings): SystemSettings {
   return {
     ...settings,
+    fileEncryption: { ...settings.fileEncryption },
     aiProviders: settings.aiProviders.map((provider) => ({ ...provider }))
   }
 }
@@ -32,11 +33,18 @@ export const useSettingsStore = defineStore('settings', {
     async loadSettings() {
       this.loading = true
       try {
-        const [settings, hiddenSession] = await Promise.all([
+        const [settings, fileEncryption, hiddenSession] = await Promise.all([
           settingsApi.getSettings(),
+          settingsApi.getFileEncryptionStatus(),
           authApi.getHiddenContentSession()
         ])
-        this.settings = cloneSettings({ ...DEFAULT_SYSTEM_SETTINGS, ...settings, showHiddenDefault: false })
+        this.settings = cloneSettings({
+          ...DEFAULT_SYSTEM_SETTINGS,
+          ...settings,
+          encryptionEnabled: fileEncryption.encryption_enabled,
+          fileEncryption,
+          showHiddenDefault: false
+        })
         this.initialized = true
         this.showHiddenContent = this.settings.hiddenFeatureEnabled && hiddenSession.show_hidden_enabled
       } finally {
@@ -61,6 +69,24 @@ export const useSettingsStore = defineStore('settings', {
       } finally {
         this.saving = false
       }
+    },
+    async enableFileEncryption(key: string) {
+      const fileEncryption = await settingsApi.enableFileEncryption(key)
+      this.settings.fileEncryption = fileEncryption
+      this.settings.encryptionEnabled = fileEncryption.encryption_enabled
+      return fileEncryption
+    },
+    async rotateFileEncryptionKey(key: string) {
+      const fileEncryption = await settingsApi.rotateFileEncryptionKey(key)
+      this.settings.fileEncryption = fileEncryption
+      this.settings.encryptionEnabled = fileEncryption.encryption_enabled
+      return fileEncryption
+    },
+    async disableFileEncryption() {
+      const fileEncryption = await settingsApi.disableFileEncryption()
+      this.settings.fileEncryption = fileEncryption
+      this.settings.encryptionEnabled = fileEncryption.encryption_enabled
+      return fileEncryption
     },
     async setShowHiddenContent(value: boolean, password?: string) {
       // 非乐观置位：等后端确认成功后再更新界面，确保目录树/文件列表在会话授权生效后才刷新。

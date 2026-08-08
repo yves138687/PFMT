@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { authApi } from '@/api/auth'
 import { settingsApi } from '@/api/settings'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { DEFAULT_SYSTEM_SETTINGS } from '@/types/settings'
 
 vi.mock('@/api/auth', () => ({
   authApi: {
@@ -16,7 +17,11 @@ vi.mock('@/api/auth', () => ({
 vi.mock('@/api/settings', () => ({
   settingsApi: {
     getSettings: vi.fn(),
-    updateSettings: vi.fn()
+    getFileEncryptionStatus: vi.fn(),
+    updateSettings: vi.fn(),
+    enableFileEncryption: vi.fn(),
+    rotateFileEncryptionKey: vi.fn(),
+    disableFileEncryption: vi.fn()
   }
 }))
 
@@ -32,10 +37,25 @@ describe('settings store', () => {
     vi.mocked(authApi.changeHiddenContentPassword).mockResolvedValue({
       configured: true
     })
+    vi.mocked(settingsApi.getFileEncryptionStatus).mockResolvedValue({
+      encryption_enabled: true,
+      key_configured: true,
+      active_key_id: 'key_test',
+      active_key_status: 'active_completed',
+      pending_rotation_count: 0
+    })
   })
 
   it('loads backend setting keys into view model fields', async () => {
+    vi.mocked(settingsApi.getFileEncryptionStatus).mockResolvedValue({
+      encryption_enabled: false,
+      key_configured: true,
+      active_key_id: 'key_test',
+      active_key_status: 'active_completed',
+      pending_rotation_count: 0
+    })
     vi.mocked(settingsApi.getSettings).mockResolvedValue({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: false,
       autoConvertTxtToMd: true,
@@ -62,6 +82,7 @@ describe('settings store', () => {
 
   it('restores manually enabled hidden content from the current session after reload', async () => {
     vi.mocked(settingsApi.getSettings).mockResolvedValue({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -87,6 +108,7 @@ describe('settings store', () => {
 
   it('turns off visible hidden content when hidden feature is disabled', async () => {
     vi.mocked(settingsApi.updateSettings).mockResolvedValue({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: false,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -104,6 +126,7 @@ describe('settings store', () => {
     await store.setShowHiddenContent(true, 'secret-6')
 
     await store.saveSettings({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: false,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -125,6 +148,7 @@ describe('settings store', () => {
 
   it('keeps AI provider API keys masked after saving settings', async () => {
     vi.mocked(settingsApi.updateSettings).mockResolvedValue({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -151,6 +175,7 @@ describe('settings store', () => {
 
     const store = useSettingsStore()
     await store.saveSettings({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
@@ -180,6 +205,7 @@ describe('settings store', () => {
 
   it('forwards the second password when enabling hidden content', async () => {
     vi.mocked(settingsApi.getSettings).mockResolvedValue({
+      ...DEFAULT_SYSTEM_SETTINGS,
       hiddenFeatureEnabled: true,
       encryptionEnabled: true,
       autoConvertTxtToMd: false,
