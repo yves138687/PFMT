@@ -4,6 +4,9 @@
 # codex
 .codex/
 
+# Local development deployment notes
+docs/dev/
+
 # Compiled class file
 *.class
 
