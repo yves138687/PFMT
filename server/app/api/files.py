@@ -16,6 +16,7 @@ from app.schemas.file import (
     DocumentSaveRequest,
     FileBatchDeleteRequest,
     FileConflictStrategy,
+    FileDashboardSummaryResponse,
     FileDetailResponse,
     FileEmbedTokenResponse,
     FileExportRequest,
@@ -99,6 +100,21 @@ def search_files(
         query=q,
         show_hidden=show_hidden,
         limit=limit,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.get("/dashboard", response_model=FileDashboardSummaryResponse)
+def get_dashboard_summary(
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileDashboardSummaryResponse:
+    """读取首页统计与最近访问，隐藏内容按当前会话开关过滤。"""
+
+    return FileService(db, settings).get_dashboard_summary(
         current_user=current_user,
         client_ip=client_ip,
     )

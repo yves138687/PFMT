@@ -340,3 +340,12 @@ class FileSearchResponse(BaseModel):
 
     items: list[FileDetailResponse]
     total: int
+
+
+class FileDashboardSummaryResponse(BaseModel):
+    """首页统计响应，隐藏内容按当前会话可见性过滤。"""
+
+    file_total: int
+    path_total: int
+    markdown_total: int
+    recent_accessed: list[FileDetailResponse] = Field(default_factory=list)

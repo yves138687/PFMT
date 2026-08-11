@@ -1,19 +1,35 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { Document, Files, FolderOpened, Key, UploadFilled } from '@element-plus/icons-vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { Document, Files, FolderOpened, Key, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 
+import { filesApi } from '@/api/files'
 import { usePathStore } from '@/stores/pathStore'
 import { useSettingsStore } from '@/stores/settingsStore'
+import type { FileDashboardSummary, FileDetail } from '@/types/files'
+import { formatDateTime, formatFileSize } from '@/utils/format'
 
 const router = useRouter()
 const pathStore = usePathStore()
 const settingsStore = useSettingsStore()
+const loading = ref(false)
+const loadError = ref('')
+const summary = ref<FileDashboardSummary>({
+  file_total: 0,
+  path_total: 0,
+  markdown_total: 0,
+  recent_accessed: []
+})
 
 const stats = computed(() => [
-  { label: '文件总数', value: '0', note: '等待文件元数据接口接入', icon: Files },
-  { label: '目录总数', value: String(pathStore.tree.length), note: '来自当前目录树根层级', icon: FolderOpened },
-  { label: 'Markdown', value: '0', note: '首阶段查看能力已预留', icon: Document },
+  { label: '文件总数', value: String(summary.value.file_total), note: '已过滤当前会话不可见内容', icon: Files },
+  {
+    label: '目录总数',
+    value: String(summary.value.path_total || pathStore.tree.length),
+    note: '包含根目录及可见子目录',
+    icon: FolderOpened
+  },
+  { label: 'Markdown', value: String(summary.value.markdown_total), note: '按扩展名和 MIME 类型统计', icon: Document },
   {
     label: '加密状态',
     value: settingsStore.encryptionEnabled ? '启用' : '关闭',
@@ -27,6 +43,33 @@ const quickActions = [
   { label: '系统配置', name: 'settings', icon: Key },
   { label: '文件列表', name: 'folder', icon: FolderOpened }
 ]
+
+async function loadDashboardSummary() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    summary.value = await filesApi.getDashboardSummary()
+  } catch {
+    loadError.value = '首页统计加载失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+function openRecentFile(row: FileDetail) {
+  void router.push({ name: 'file-detail', params: { fileId: row.file_id } })
+}
+
+onMounted(() => {
+  void loadDashboardSummary()
+})
+
+watch(
+  () => settingsStore.showHiddenContent,
+  () => {
+    void loadDashboardSummary()
+  }
+)
 </script>
 
 <template>
@@ -52,10 +95,38 @@ const quickActions = [
     <section class="work-panel dashboard__section">
       <div class="panel-header">
         <h2>最近访问</h2>
-        <span class="muted">隐藏内容默认不展示</span>
+        <div class="dashboard__section-tools">
+          <span class="muted">隐藏内容默认不展示</span>
+          <el-button :icon="Refresh" text :loading="loading" @click="loadDashboardSummary">刷新</el-button>
+        </div>
       </div>
-      <div class="panel-body">
-        <el-empty description="最近访问列表将在文件详情接口接入后展示" />
+      <div v-loading="loading" class="panel-body">
+        <el-alert v-if="loadError" :title="loadError" type="error" show-icon :closable="false" />
+        <el-table
+          v-else-if="summary.recent_accessed.length > 0"
+          :data="summary.recent_accessed"
+          class="dashboard__recent-table"
+          @row-click="openRecentFile"
+        >
+          <el-table-column prop="original_name" label="文件名" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="logical_path" label="位置" min-width="260" show-overflow-tooltip />
+          <el-table-column label="类型" width="110">
+            <template #default="{ row }">
+              {{ row.file_ext || row.file_type }}
+            </template>
+          </el-table-column>
+          <el-table-column label="大小" width="120">
+            <template #default="{ row }">
+              {{ formatFileSize(row.size_bytes) }}
+            </template>
+          </el-table-column>
+          <el-table-column label="最近访问" width="180">
+            <template #default="{ row }">
+              {{ formatDateTime(row.last_accessed_at) }}
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无最近访问文件" />
       </div>
     </section>
 
@@ -129,6 +200,20 @@ const quickActions = [
 
 .dashboard__section {
   margin-top: 16px;
+}
+
+.dashboard__section-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dashboard__recent-table {
+  width: 100%;
+}
+
+.dashboard__recent-table :deep(.el-table__row) {
+  cursor: pointer;
 }
 
 .dashboard__actions {

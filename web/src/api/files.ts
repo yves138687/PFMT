@@ -5,6 +5,7 @@ import type {
   DocumentConvertPayload,
   DocumentMergePayload,
   FileBatchDeletePayload,
+  FileDashboardSummary,
   DocumentSavePayload,
   FileDetail,
   FileEmbedToken,
@@ -33,6 +34,9 @@ export const filesApi = {
         limit
       }
     })
+  },
+  getDashboardSummary() {
+    return http.get<FileDashboardSummary>('/files/dashboard')
   },
   uploadFile(payload: UploadFilePayload) {
     const formData = new FormData()

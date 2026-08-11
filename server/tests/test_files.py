@@ -52,6 +52,77 @@ def test_upload_uses_random_storage_object_name(client: TestClient, auth_headers
         assert payload not in stored_bytes
 
 
+def test_dashboard_summary_counts_visible_content(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """首页统计和最近访问默认排除隐藏文件、隐藏目录及其内容。"""
+
+    visible_path = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Visible", "parent_path_id": "root"},
+    ).json()
+    hidden_path = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Hidden", "parent_path_id": "root", "is_hidden": True},
+    ).json()
+    visible_markdown = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("visible.md", b"# Visible\n", "text/markdown")},
+    ).json()
+    plain_file = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": visible_path["path_id"], "encryption_enabled": "true"},
+        files={"file": ("plain.txt", b"plain", "text/plain")},
+    )
+    assert plain_file.status_code == 201
+    hidden_file = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true", "is_hidden": "true"},
+        files={"file": ("hidden-root.md", b"# Hidden root\n", "text/markdown")},
+    )
+    assert hidden_file.status_code == 201
+    hidden_path_file = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": hidden_path["path_id"], "encryption_enabled": "true"},
+        files={"file": ("hidden-path.md", b"# Hidden path\n", "text/markdown")},
+    )
+    assert hidden_path_file.status_code == 201
+
+    read_response = client.get(
+        f"/api/files/{visible_markdown['file_id']}/markdown",
+        headers=auth_headers,
+    )
+    assert read_response.status_code == 200
+
+    summary_response = client.get("/api/files/dashboard", headers=auth_headers)
+    assert summary_response.status_code == 200
+    summary = summary_response.json()
+    assert summary["file_total"] == 2
+    assert summary["path_total"] == 2
+    assert summary["markdown_total"] == 1
+    assert [item["original_name"] for item in summary["recent_accessed"]] == ["visible.md"]
+    assert summary["recent_accessed"][0]["logical_path"] == "/visible.md"
+
+    session_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert session_response.status_code == 200
+
+    visible_summary = client.get("/api/files/dashboard", headers=auth_headers).json()
+    assert visible_summary["file_total"] == 4
+    assert visible_summary["path_total"] == 3
+    assert visible_summary["markdown_total"] == 3
+
+
 def test_upload_defaults_to_plaintext_when_system_encryption_is_disabled(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

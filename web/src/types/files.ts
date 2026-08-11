@@ -68,6 +68,13 @@ export interface FileSearchResponse {
   total: number
 }
 
+export interface FileDashboardSummary {
+  file_total: number
+  path_total: number
+  markdown_total: number
+  recent_accessed: FileDetail[]
+}
+
 export interface UploadFilePayload {
   file: File
   pathId: string

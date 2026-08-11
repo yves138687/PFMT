@@ -31,6 +31,7 @@ from app.schemas.file import (
     DocumentSaveRequest,
     FileBatchDeleteRequest,
     FileConflictStrategy,
+    FileDashboardSummaryResponse,
     FileDetailResponse,
     FileEmbedTokenResponse,
     FileExportRequest,
@@ -999,6 +1000,58 @@ class FileService:
         )
         return self._to_list_items(files)
 
+    def get_dashboard_summary(
+        self,
+        *,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileDashboardSummaryResponse:
+        """读取首页统计和最近访问，隐藏内容只按当前会话开关决定是否纳入。"""
+
+        include_hidden = self._include_hidden_files(current_user=current_user)
+        paths = self.path_repository.list_active(include_hidden=True)
+        visible_path_ids = self._visible_path_ids(paths=paths, include_hidden=include_hidden)
+        file_total = self.repository.count_active_by_path_ids(
+            visible_path_ids,
+            include_hidden=include_hidden,
+        )
+        markdown_total = self.repository.count_markdown_active_by_path_ids(
+            visible_path_ids,
+            include_hidden=include_hidden,
+        )
+        recent_files = self.repository.list_recent_accessed_by_path_ids(
+            visible_path_ids,
+            include_hidden=include_hidden,
+            limit=8,
+        )
+        path_by_id = {path.path_id: path for path in paths}
+        recent_accessed = [
+            self._to_detail_response(file_info, parent_path)
+            for file_info in recent_files
+            if (parent_path := path_by_id.get(file_info.path_id)) is not None
+        ]
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="get_dashboard_summary",
+            target_type="dashboard",
+            result="success",
+            detail={
+                "file_total": file_total,
+                "path_total": len(visible_path_ids),
+                "markdown_total": markdown_total,
+                "recent_count": len(recent_accessed),
+                "show_hidden": include_hidden,
+            },
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return FileDashboardSummaryResponse(
+            file_total=file_total,
+            path_total=len(visible_path_ids),
+            markdown_total=markdown_total,
+            recent_accessed=recent_accessed,
+        )
+
     def get_file_detail(
         self,
         *,
@@ -1605,6 +1658,30 @@ class FileService:
         hidden_feature_enabled = self.setting_service.get_bool("hidden.feature_enabled", True)
         session_enabled = bool(getattr(current_user, "_pfmt_show_hidden_enabled", False))
         return hidden_feature_enabled and session_enabled
+
+    def _visible_path_ids(self, *, paths: list[FilePath], include_hidden: bool) -> list[str]:
+        """返回当前会话可见的目录 ID；隐藏祖先目录下的内容也不暴露。"""
+
+        if include_hidden:
+            return [path.path_id for path in paths]
+
+        path_by_id = {path.path_id: path for path in paths}
+        return [
+            path.path_id
+            for path in paths
+            if self._path_and_ancestors_visible(path, path_by_id=path_by_id)
+        ]
+
+    @staticmethod
+    def _path_and_ancestors_visible(path: FilePath, *, path_by_id: dict[str, FilePath]) -> bool:
+        """判断目录本身及祖先目录是否均未隐藏。"""
+
+        current: FilePath | None = path
+        while current is not None:
+            if current.is_hidden:
+                return False
+            current = path_by_id.get(current.parent_path_id) if current.parent_path_id else None
+        return True
 
     def _get_visible_file_and_path(
         self,

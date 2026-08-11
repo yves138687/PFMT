@@ -152,6 +152,24 @@ describe('filesApi', () => {
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
   })
 
+  it('reads dashboard summary without visibility query', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        file_total: 2,
+        path_total: 1,
+        markdown_total: 1,
+        recent_accessed: []
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.getDashboardSummary()
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/dashboard')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('GET')
+  })
+
   it('updates tags and reads preview blob', async () => {
     const fetchMock = vi
       .fn()

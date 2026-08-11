@@ -1,10 +1,11 @@
 from collections.abc import Sequence
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.security import now_utc
 from app.models.file import FileInfo, FileTag, FileTagRel
+from app.utils.file_type import MARKDOWN_EXTENSIONS, MARKDOWN_MIME_TYPES
 
 
 class FileRepository:
@@ -95,6 +96,68 @@ class FileRepository:
             return []
 
         stmt = select(FileInfo).where(FileInfo.path_id.in_(path_ids), FileInfo.status == "active")
+        return list(self.db.execute(stmt).scalars().all())
+
+    def count_active_by_path_ids(self, path_ids: Sequence[str], *, include_hidden: bool) -> int:
+        """统计可见目录范围内的未删除文件数量。"""
+
+        if not path_ids:
+            return 0
+
+        stmt = select(func.count()).select_from(FileInfo).where(
+            FileInfo.path_id.in_(path_ids),
+            FileInfo.status == "active",
+        )
+        if not include_hidden:
+            stmt = stmt.where(FileInfo.is_hidden.is_(False))
+        return int(self.db.execute(stmt).scalar_one())
+
+    def count_markdown_active_by_path_ids(self, path_ids: Sequence[str], *, include_hidden: bool) -> int:
+        """统计可见目录范围内的 Markdown 文件数量。"""
+
+        if not path_ids:
+            return 0
+
+        stmt = (
+            select(func.count())
+            .select_from(FileInfo)
+            .where(
+                FileInfo.path_id.in_(path_ids),
+                FileInfo.status == "active",
+                or_(
+                    FileInfo.file_ext.in_(MARKDOWN_EXTENSIONS),
+                    FileInfo.mime_type.in_(MARKDOWN_MIME_TYPES),
+                ),
+            )
+        )
+        if not include_hidden:
+            stmt = stmt.where(FileInfo.is_hidden.is_(False))
+        return int(self.db.execute(stmt).scalar_one())
+
+    def list_recent_accessed_by_path_ids(
+        self,
+        path_ids: Sequence[str],
+        *,
+        include_hidden: bool,
+        limit: int,
+    ) -> list[FileInfo]:
+        """按最近访问时间读取可见文件。"""
+
+        if not path_ids:
+            return []
+
+        stmt = (
+            select(FileInfo)
+            .where(
+                FileInfo.path_id.in_(path_ids),
+                FileInfo.status == "active",
+                FileInfo.last_accessed_at.is_not(None),
+            )
+            .order_by(FileInfo.last_accessed_at.desc(), FileInfo.id.desc())
+            .limit(limit)
+        )
+        if not include_hidden:
+            stmt = stmt.where(FileInfo.is_hidden.is_(False))
         return list(self.db.execute(stmt).scalars().all())
 
     def mark_accessed(self, file_info: FileInfo) -> None:
