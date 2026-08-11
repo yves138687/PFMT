@@ -100,5 +100,25 @@ a {
 
   .page-heading {
     display: block;
+    margin-bottom: 14px;
+  }
+
+  .panel-header {
+    padding: 14px;
+  }
+
+  .panel-body {
+    padding: 14px;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-heading h1 {
+    font-size: 20px;
+  }
+
+  .panel-header,
+  .panel-body {
+    padding: 12px;
   }
 }

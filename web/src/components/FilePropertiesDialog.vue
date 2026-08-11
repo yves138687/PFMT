@@ -70,7 +70,7 @@ async function loadDetail() {
 
   loading.value = true
   try {
-    const [response, tags] = await Promise.all([filesApi.getFileDetail(fileId, props.showHidden), tagsApi.listTags()])
+    const [response, tags] = await Promise.all([filesApi.getFileDetail(fileId), tagsApi.listTags()])
     detail.value = response
     tagOptions.value = tags
     syncDraft(response)
@@ -90,7 +90,6 @@ async function saveMetadata() {
     const normalizedName = nameDraft.value.trim()
     const normalizedRemark = remarkDraft.value.trim() ? remarkDraft.value : null
     const normalizedSummary = summaryDraft.value.trim() ? summaryDraft.value : null
-    const saveShowHidden = props.showHidden || hiddenDraft.value
     let updated = await filesApi.updateFile(
       file.file_id,
       {
@@ -98,10 +97,9 @@ async function saveMetadata() {
         remark: normalizedRemark,
         summary_content: normalizedSummary,
         is_hidden: hiddenDraft.value
-      },
-      saveShowHidden
+      }
     )
-    updated = await filesApi.updateFileTags(file.file_id, tagDraft.value, saveShowHidden)
+    updated = await filesApi.updateFileTags(file.file_id, tagDraft.value)
     detail.value = updated
     syncDraft(updated)
     emit('saved', updated)

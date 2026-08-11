@@ -18,6 +18,7 @@ import {
   List,
   MagicStick,
   Minus,
+  MoreFilled,
   Paperclip,
   Picture,
   Plus,
@@ -69,6 +70,7 @@ const saving = ref(false)
 const converting = ref(false)
 const exporting = ref(false)
 const convertVisible = ref(false)
+const outlineDrawerVisible = ref(false)
 const editorVersion = ref(0)
 const toolbarVersion = ref(0)
 const activeOutlineId = ref('')
@@ -304,7 +306,7 @@ async function loadDocument() {
 
   loading.value = true
   try {
-    const response = await filesApi.getDocument(fileId.value, settingsStore.showHiddenContent)
+    const response = await filesApi.getDocument(fileId.value)
     documentContent.value = response
     sourceContent.value = response.content
     activeOutlineId.value = ''
@@ -352,8 +354,7 @@ async function saveDocument() {
       {
         document_format: currentDocument.document_format,
         content: currentSaveContent()
-      },
-      settingsStore.showHiddenContent
+      }
     )
     documentContent.value = response
     sourceContent.value = response.content
@@ -375,7 +376,7 @@ async function exportDocument() {
 
   exporting.value = true
   try {
-    const response = await filesApi.exportFile(currentDocument.file_id, settingsStore.showHiddenContent)
+    const response = await filesApi.exportFile(currentDocument.file_id)
     saveBlobResponse(response, currentDocument.original_name)
     ElMessage.success('文件已开始导出')
   } finally {
@@ -450,6 +451,11 @@ function scrollToOutline(id: string, index = -1) {
 
   activeOutlineId.value = id
   scrollElementIntoCanvas(container, target)
+}
+
+function navigateOutline(id: string, index = -1) {
+  scrollToOutline(id, index)
+  outlineDrawerVisible.value = false
 }
 
 function updateActiveOutline() {
@@ -587,8 +593,7 @@ async function convertDocument() {
       {
         target_format: convertForm.value.target_format,
         target_name: convertForm.value.target_name.trim() || null
-      },
-      settingsStore.showHiddenContent
+      }
     )
     convertVisible.value = false
     ElMessage.success('已生成转换后的新文件')
@@ -749,7 +754,7 @@ async function insertUploadedImages(files: File[]) {
     return
   }
   try {
-    const attachmentPathId = await ensureAttachmentFolder(fromPathId.value ?? 'root', settingsStore.showHiddenContent)
+    const attachmentPathId = await ensureAttachmentFolder(fromPathId.value ?? 'root')
     for (const file of files) {
       const uploaded = await filesApi.uploadFile({
         file,
@@ -790,7 +795,7 @@ async function openDocumentImagePreview(event: MouseEvent) {
   imagePreviewLoading.value = true
   revokeImagePreviewUrl()
   try {
-    const blob = await filesApi.getPreviewBlob(fileId, settingsStore.showHiddenContent)
+    const blob = await filesApi.getPreviewBlob(fileId)
     imagePreviewUrl.value = URL.createObjectURL(blob)
   } catch (error) {
     imagePreviewVisible.value = false
@@ -869,7 +874,10 @@ onBeforeUnmount(() => {
           <el-radio-button label="edit">编辑</el-radio-button>
           <el-radio-button label="source">源码</el-radio-button>
         </el-radio-group>
-        <span class="muted">统一文档打开</span>
+        <span class="muted document-view__mode-label">统一文档打开</span>
+        <el-button v-if="showOutline" class="document-view__outline-button" size="small" @click="outlineDrawerVisible = true">
+          目录
+        </el-button>
         <div v-if="mode === 'read'" class="document-view__read-font-controls">
           <el-button size="small" title="减小阅读字号" :disabled="readFontSize <= MIN_READ_FONT_SIZE" @click="decreaseReadFontSize">
             A−
@@ -898,6 +906,9 @@ onBeforeUnmount(() => {
             >
               <b>B</b>
             </el-button>
+          </el-button-group>
+
+          <el-button-group class="document-view__toolbar-extended">
             <el-button
               size="small"
               :type="toolbarActive.italic ? 'primary' : 'default'"
@@ -924,7 +935,7 @@ onBeforeUnmount(() => {
             </el-button>
           </el-button-group>
 
-          <span class="document-view__toolbar-sep" />
+          <span class="document-view__toolbar-sep document-view__toolbar-extended" />
 
           <el-button-group>
             <el-button
@@ -944,9 +955,9 @@ onBeforeUnmount(() => {
             </el-button>
           </el-button-group>
 
-          <span class="document-view__toolbar-sep" />
+          <span class="document-view__toolbar-sep document-view__toolbar-extended" />
 
-          <el-button-group>
+          <el-button-group class="document-view__toolbar-extended">
             <el-button
               size="small"
               :type="toolbarActive.blockquote ? 'primary' : 'default'"
@@ -973,9 +984,9 @@ onBeforeUnmount(() => {
             <el-button size="small" title="分割线" @click="editor?.chain().focus().setHorizontalRule().run()">—</el-button>
           </el-button-group>
 
-          <span class="document-view__toolbar-sep" />
+          <span class="document-view__toolbar-sep document-view__toolbar-extended" />
 
-          <el-button-group>
+          <el-button-group class="document-view__toolbar-extended">
             <el-button size="small" title="插入表格" :icon="Grid" @click="insertTable" />
             <template v-if="toolbarActive.table">
               <el-button size="small" title="上方插入行" :icon="Plus" @click="editor?.chain().focus().addRowBefore().run()" />
@@ -987,6 +998,31 @@ onBeforeUnmount(() => {
               <el-button size="small" title="删除表格" :icon="Remove" @click="editor?.chain().focus().deleteTable().run()" />
             </template>
           </el-button-group>
+
+          <el-dropdown class="document-view__toolbar-more" trigger="click">
+            <el-button size="small" :icon="MoreFilled" aria-label="更多编辑工具" />
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="toggleMark('italic')"><i>I</i> 斜体</el-dropdown-item>
+                <el-dropdown-item @click="toggleMark('strike')"><s>S</s> 删除线</el-dropdown-item>
+                <el-dropdown-item @click="toggleMark('code')">行内代码</el-dropdown-item>
+                <el-dropdown-item divided @click="editor?.chain().focus().toggleBlockquote().run()">引用</el-dropdown-item>
+                <el-dropdown-item @click="editor?.chain().focus().toggleCodeBlock().run()">代码块</el-dropdown-item>
+                <el-dropdown-item @click="toggleLink">链接</el-dropdown-item>
+                <el-dropdown-item @click="editor?.chain().focus().setHorizontalRule().run()">分割线</el-dropdown-item>
+                <el-dropdown-item divided :icon="Grid" @click="insertTable">插入表格</el-dropdown-item>
+                <template v-if="toolbarActive.table">
+                  <el-dropdown-item @click="editor?.chain().focus().addRowBefore().run()">上方插入行</el-dropdown-item>
+                  <el-dropdown-item @click="editor?.chain().focus().addRowAfter().run()">下方插入行</el-dropdown-item>
+                  <el-dropdown-item @click="editor?.chain().focus().addColumnBefore().run()">左侧插入列</el-dropdown-item>
+                  <el-dropdown-item @click="editor?.chain().focus().addColumnAfter().run()">右侧插入列</el-dropdown-item>
+                  <el-dropdown-item @click="editor?.chain().focus().deleteRow().run()">删除当前行</el-dropdown-item>
+                  <el-dropdown-item @click="editor?.chain().focus().deleteColumn().run()">删除当前列</el-dropdown-item>
+                  <el-dropdown-item divided @click="editor?.chain().focus().deleteTable().run()">删除表格</el-dropdown-item>
+                </template>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
 
           <span class="document-view__toolbar-sep" />
 
@@ -1028,6 +1064,7 @@ onBeforeUnmount(() => {
           </div>
           <DocumentOutline
             v-if="showOutline"
+            class="document-view__desktop-outline"
             :items="outlineItems"
             :active-id="activeOutlineId"
             @navigate="scrollToOutline"
@@ -1036,6 +1073,14 @@ onBeforeUnmount(() => {
         <el-empty v-else description="暂无文档内容" />
       </div>
     </section>
+
+    <el-drawer v-model="outlineDrawerVisible" title="文档目录" direction="btt" size="min(64vh, 420px)">
+      <DocumentOutline
+        :items="outlineItems"
+        :active-id="activeOutlineId"
+        @navigate="navigateOutline"
+      />
+    </el-drawer>
 
     <el-dialog v-model="convertVisible" title="转换为新文件" width="420px">
       <el-form label-position="top">
@@ -1084,6 +1129,11 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.document-view__outline-button,
+.document-view__toolbar-more {
+  display: none;
 }
 
 .document-view__body {
@@ -1383,6 +1433,71 @@ onBeforeUnmount(() => {
 
 .document-view__canvas:focus-within {
   border-color: var(--el-color-primary);
+}
+
+@media (max-width: 820px) {
+  .document-view__actions {
+    justify-content: flex-start;
+    margin-top: 12px;
+  }
+
+  .document-view :deep(.panel-header) {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    padding: 12px;
+  }
+
+  .document-view__outline-button {
+    display: inline-flex;
+  }
+
+  .document-view__mode-label {
+    display: none;
+  }
+
+  .document-view__read-font-controls {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .document-view__toolbar {
+    gap: 5px;
+    padding: 8px;
+  }
+
+  .document-view__toolbar-extended,
+  .document-view__desktop-outline {
+    display: none;
+  }
+
+  .document-view__toolbar-more {
+    display: inline-flex;
+  }
+
+  .document-view__canvas {
+    min-height: 56vh;
+    padding: 16px;
+  }
+
+  .document-view__source {
+    min-height: calc(56vh - 32px);
+    padding: 16px;
+  }
+
+  .document-view__rendered,
+  .document-view__editor {
+    min-height: calc(56vh - 32px);
+  }
+
+  .document-view__prose,
+  .document-view__editor :deep(.ProseMirror) {
+    min-height: calc(56vh - 32px);
+  }
+
+  .document-view__prose :deep(table),
+  .document-view__editor :deep(table) {
+    min-width: max-content;
+  }
 }
 
 @media (max-width: 960px) {

@@ -24,8 +24,8 @@ function findNode(nodes: FilePathNode[], pathId: string): FilePathNode | null {
 }
 
 /** 在父目录下查找「附件」子目录；不存在则自动创建，并继承父目录隐藏状态。 */
-export async function ensureAttachmentFolder(parentPathId: string, showHidden: boolean): Promise<string> {
-  const tree = await pathsApi.getPathTree(showHidden)
+export async function ensureAttachmentFolder(parentPathId: string): Promise<string> {
+  const tree = await pathsApi.getPathTree()
   const parent = findNode(tree, parentPathId) ?? { path_id: parentPathId, is_hidden: false } as FilePathNode
   const existing = (parent.children ?? []).find((child) => child.path_name === ATTACHMENT_FOLDER_NAME)
   if (existing) {
@@ -41,7 +41,7 @@ export async function ensureAttachmentFolder(parentPathId: string, showHidden: b
     return created.path_id
   } catch {
     // 并发创建冲突等场景：重查一次，若已存在则复用。
-    const refreshed = await pathsApi.getPathTree(showHidden)
+    const refreshed = await pathsApi.getPathTree()
     const refreshedParent = findNode(refreshed, parentPathId)
     const createdNow = (refreshedParent?.children ?? []).find((child) => child.path_name === ATTACHMENT_FOLDER_NAME)
     if (createdNow) {

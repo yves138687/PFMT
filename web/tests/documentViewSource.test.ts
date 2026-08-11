@@ -93,4 +93,16 @@ describe('DocumentView source contract', () => {
     expect(source).toContain(':style="{ \'--document-read-font-size\': `${readFontSize}px` }"')
     expect(source).toContain('font-size: var(--document-read-font-size);')
   })
+
+  it('compacts editing tools and moves the outline into a mobile drawer', () => {
+    expect(source).toContain('MoreFilled')
+    expect(source).toContain('document-view__toolbar-more')
+    expect(source).toContain('更多编辑工具')
+    expect(source).toContain('outlineDrawerVisible')
+    expect(source).toContain('文档目录')
+    expect(source).toContain('navigateOutline')
+    expect(source).toContain('document-view__desktop-outline')
+    expect(source).toContain('document-view__mode-label')
+    expect(source).toContain('@media (max-width: 820px)')
+  })
 })

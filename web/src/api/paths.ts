@@ -10,7 +10,7 @@ function normalizeNode(node: FilePathNode): FilePathNode {
 }
 
 export const pathsApi = {
-  async getPathTree(_showHidden: boolean) {
+  async getPathTree() {
     const response = await http.get<FilePathNode[] | { nodes: FilePathNode[] }>('/paths/tree')
 
     const nodes = Array.isArray(response) ? response : response.nodes
@@ -35,6 +35,6 @@ export const pathsApi = {
   }
 }
 
-export function getPathTreeApi(showHidden = false) {
-  return pathsApi.getPathTree(showHidden)
+export function getPathTreeApi() {
+  return pathsApi.getPathTree()
 }

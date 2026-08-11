@@ -20,14 +20,14 @@ import type {
 } from '@/types/files'
 
 export const filesApi = {
-  listFiles(pathId = 'root', _showHidden?: boolean) {
+  listFiles(pathId = 'root') {
     return http.get<FileInfo[]>('/files', {
       query: {
         path_id: pathId
       }
     })
   },
-  searchFiles(query: string, _showHidden?: boolean, limit = 50) {
+  searchFiles(query: string, limit = 50) {
     return http.get<FileSearchResponse>('/files/search', {
       query: {
         q: query,
@@ -51,16 +51,16 @@ export const filesApi = {
 
     return http.post<FileInfo>('/files/upload', formData)
   },
-  getFileDetail(fileId: string, _showHidden?: boolean) {
+  getFileDetail(fileId: string) {
     return http.get<FileDetail>(`/files/${encodeURIComponent(fileId)}`)
   },
-  updateFile(fileId: string, payload: FileUpdatePayload, _showHidden?: boolean) {
+  updateFile(fileId: string, payload: FileUpdatePayload) {
     return http.patch<FileDetail>(`/files/${encodeURIComponent(fileId)}`, payload)
   },
-  updateFileRemark(fileId: string, remark: string | null, showHidden?: boolean) {
-    return filesApi.updateFile(fileId, { remark }, showHidden)
+  updateFileRemark(fileId: string, remark: string | null) {
+    return filesApi.updateFile(fileId, { remark })
   },
-  updateFileTags(fileId: string, tagNames: string[], _showHidden?: boolean) {
+  updateFileTags(fileId: string, tagNames: string[]) {
     return http.put<FileDetail>(
       `/files/${encodeURIComponent(fileId)}/tags`,
       {
@@ -68,7 +68,7 @@ export const filesApi = {
       }
     )
   },
-  moveFile(fileId: string, pathId: string, _showHidden?: boolean) {
+  moveFile(fileId: string, pathId: string) {
     return http.patch<FileDetail>(
       `/files/${encodeURIComponent(fileId)}/move`,
       {
@@ -76,21 +76,21 @@ export const filesApi = {
       }
     )
   },
-  deleteFile(fileId: string, _showHidden?: boolean) {
+  deleteFile(fileId: string) {
     return http.delete<void>(`/files/${encodeURIComponent(fileId)}`)
   },
-  deleteFiles(fileIds: string[], _showHidden?: boolean) {
+  deleteFiles(fileIds: string[]) {
     const payload: FileBatchDeletePayload = {
       file_ids: fileIds
     }
     return http.post<void>('/files/delete', payload)
   },
-  exportFile(fileId: string, _showHidden?: boolean) {
+  exportFile(fileId: string) {
     return http.blobResponse(`/files/${encodeURIComponent(fileId)}/export`, {
       method: 'GET'
     })
   },
-  exportFiles(fileIds: string[], _showHidden?: boolean) {
+  exportFiles(fileIds: string[]) {
     return http.blobResponse('/files/export', {
       method: 'POST',
       body: {
@@ -98,34 +98,34 @@ export const filesApi = {
       }
     })
   },
-  getMarkdownFile(fileId: string, _showHidden?: boolean) {
+  getMarkdownFile(fileId: string) {
     return http.get<MarkdownFileContent>(`/files/${encodeURIComponent(fileId)}/markdown`)
   },
-  getTextFile(fileId: string, _showHidden?: boolean) {
+  getTextFile(fileId: string) {
     return http.get<TextFileContent>(`/files/${encodeURIComponent(fileId)}/text`)
   },
-  getPreviewBlob(fileId: string, _showHidden?: boolean) {
+  getPreviewBlob(fileId: string) {
     return http.blob(`/files/${encodeURIComponent(fileId)}/preview`)
   },
-  issuePreviewToken(fileId: string, _showHidden?: boolean) {
+  issuePreviewToken(fileId: string) {
     return http.post<FilePreviewToken>(`/files/${encodeURIComponent(fileId)}/preview-token`)
   },
-  issueEmbedToken(fileId: string, _showHidden?: boolean) {
+  issueEmbedToken(fileId: string) {
     return http.post<FileEmbedToken>(`/files/${encodeURIComponent(fileId)}/embed-token`)
   },
-  getDocument(fileId: string, _showHidden?: boolean) {
+  getDocument(fileId: string) {
     return http.get<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`)
   },
   createDocument(payload: DocumentCreatePayload) {
     return http.post<FileDetail>('/files/document', payload)
   },
-  saveDocument(fileId: string, payload: DocumentSavePayload, _showHidden?: boolean) {
+  saveDocument(fileId: string, payload: DocumentSavePayload) {
     return http.put<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`, payload)
   },
-  convertDocument(fileId: string, payload: DocumentConvertPayload, _showHidden?: boolean) {
+  convertDocument(fileId: string, payload: DocumentConvertPayload) {
     return http.post<FileDetail>(`/files/${encodeURIComponent(fileId)}/convert`, payload)
   },
-  mergeDocuments(payload: DocumentMergePayload, _showHidden?: boolean) {
+  mergeDocuments(payload: DocumentMergePayload) {
     return http.post<FileDetail>('/files/merge', payload)
   }
 }
@@ -150,6 +150,6 @@ export async function uploadFileApi(pathId: string, file: File) {
   })
 }
 
-export function readMarkdownApi(fileId: string, showHidden?: boolean) {
-  return filesApi.getMarkdownFile(fileId, showHidden)
+export function readMarkdownApi(fileId: string) {
+  return filesApi.getMarkdownFile(fileId)
 }

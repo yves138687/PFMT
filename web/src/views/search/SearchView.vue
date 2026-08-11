@@ -41,7 +41,7 @@ async function loadResults() {
   }
   loading.value = true
   try {
-    const response = await filesApi.searchFiles(keyword.value, settingsStore.showHiddenContent)
+    const response = await filesApi.searchFiles(keyword.value)
     results.value = response.items
     total.value = response.total
   } finally {

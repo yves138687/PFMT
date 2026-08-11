@@ -68,7 +68,6 @@ def _parse_range_header(range_header: str | None, total_size: int) -> ContentRan
 @router.get("", response_model=list[FileListItem])
 def list_files(
     path_id: str = Query(default="root"),
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -78,7 +77,6 @@ def list_files(
 
     return FileService(db, settings).list_files(
         path_id=path_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -87,7 +85,6 @@ def list_files(
 @router.get("/search", response_model=FileSearchResponse)
 def search_files(
     q: str = Query(min_length=1, max_length=200),
-    show_hidden: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=100),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
@@ -98,7 +95,6 @@ def search_files(
 
     return FileService(db, settings).search_files(
         query=q,
-        show_hidden=show_hidden,
         limit=limit,
         current_user=current_user,
         client_ip=client_ip,
@@ -123,7 +119,6 @@ def get_dashboard_summary(
 @router.post("/export")
 def export_files(
     payload: FileExportRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -133,7 +128,6 @@ def export_files(
 
     filename, media_type, content_length, chunks = FileService(db, settings).export_files_content(
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -151,7 +145,6 @@ def export_files(
 @router.get("/{file_id}/export")
 def export_file(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -161,7 +154,6 @@ def export_file(
 
     file_info, chunks = FileService(db, settings).export_file_content(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -180,7 +172,6 @@ def export_file(
 @router.get("/{file_id}/preview")
 def preview_file(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -190,7 +181,6 @@ def preview_file(
 
     file_info, chunks = FileService(db, settings).preview_content(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -206,7 +196,6 @@ def preview_file(
 @router.post("/{file_id}/preview-token", response_model=FilePreviewTokenResponse)
 def issue_preview_token(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -216,7 +205,6 @@ def issue_preview_token(
 
     return FileService(db, settings).issue_preview_token(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -225,7 +213,6 @@ def issue_preview_token(
 @router.post("/{file_id}/embed-token", response_model=FileEmbedTokenResponse)
 def issue_embed_token(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -235,7 +222,6 @@ def issue_embed_token(
 
     return FileService(db, settings).issue_embed_token(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -309,7 +295,6 @@ def stream_embed(
 @router.post("/merge", response_model=FileDetailResponse, status_code=status.HTTP_201_CREATED)
 def merge_documents(
     payload: DocumentMergeRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -319,7 +304,6 @@ def merge_documents(
 
     return FileService(db, settings).merge_documents(
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -328,7 +312,6 @@ def merge_documents(
 @router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
 def delete_files(
     payload: FileBatchDeleteRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -338,7 +321,6 @@ def delete_files(
 
     FileService(db, settings).delete_files(
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -364,7 +346,6 @@ def create_document(
 @router.get("/{file_id}", response_model=FileDetailResponse)
 def get_file_detail(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -374,7 +355,6 @@ def get_file_detail(
 
     return FileService(db, settings).get_file_detail(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -384,7 +364,6 @@ def get_file_detail(
 def move_file(
     file_id: str,
     payload: FileMoveRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -395,7 +374,6 @@ def move_file(
     return FileService(db, settings).move_file(
         file_id=file_id,
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -405,7 +383,6 @@ def move_file(
 def update_file_remark(
     file_id: str,
     payload: FileUpdateRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -416,7 +393,6 @@ def update_file_remark(
     return FileService(db, settings).update_file_remark(
         file_id=file_id,
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -425,7 +401,6 @@ def update_file_remark(
 @router.get("/{file_id}/document", response_model=DocumentReadResponse)
 def read_document(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -435,7 +410,6 @@ def read_document(
 
     return FileService(db, settings).read_document(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -445,7 +419,6 @@ def read_document(
 def save_document(
     file_id: str,
     payload: DocumentSaveRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -456,7 +429,6 @@ def save_document(
     return FileService(db, settings).save_document(
         file_id=file_id,
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -466,7 +438,6 @@ def save_document(
 def convert_document(
     file_id: str,
     payload: DocumentConvertRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -477,7 +448,6 @@ def convert_document(
     return FileService(db, settings).convert_document(
         file_id=file_id,
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -487,7 +457,6 @@ def convert_document(
 def update_file_tags(
     file_id: str,
     payload: FileTagsUpdateRequest,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -498,7 +467,6 @@ def update_file_tags(
     return FileService(db, settings).update_file_tags(
         file_id=file_id,
         payload=payload,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -507,7 +475,6 @@ def update_file_tags(
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_file(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -517,7 +484,6 @@ def delete_file(
 
     FileService(db, settings).delete_file(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -551,7 +517,6 @@ async def upload_file(
 @router.get("/{file_id}/markdown", response_model=MarkdownReadResponse)
 def read_markdown(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -561,7 +526,6 @@ def read_markdown(
 
     return FileService(db, settings).read_markdown(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )
@@ -570,7 +534,6 @@ def read_markdown(
 @router.get("/{file_id}/text", response_model=TextReadResponse)
 def read_text(
     file_id: str,
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -580,7 +543,6 @@ def read_text(
 
     return FileService(db, settings).read_text(
         file_id=file_id,
-        show_hidden=show_hidden,
         current_user=current_user,
         client_ip=client_ip,
     )

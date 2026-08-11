@@ -100,7 +100,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FilePreviewTokenResponse:
@@ -108,7 +107,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="issue_preview_token",
             current_user=current_user,
             client_ip=client_ip,
@@ -158,7 +156,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileEmbedTokenResponse:
@@ -166,7 +163,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="issue_embed_token",
             current_user=current_user,
             client_ip=client_ip,
@@ -532,7 +528,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> MarkdownReadResponse:
@@ -540,7 +535,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="read_markdown",
             current_user=current_user,
             client_ip=client_ip,
@@ -597,7 +591,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> DocumentReadResponse:
@@ -605,7 +598,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="read_document",
             current_user=current_user,
             client_ip=client_ip,
@@ -665,7 +657,6 @@ class FileService:
         *,
         file_id: str,
         payload: DocumentSaveRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> DocumentReadResponse:
@@ -673,7 +664,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="save_document",
             current_user=current_user,
             client_ip=client_ip,
@@ -739,7 +729,6 @@ class FileService:
         *,
         file_id: str,
         payload: DocumentConvertRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
@@ -747,7 +736,6 @@ class FileService:
 
         file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="convert_document",
             current_user=current_user,
             client_ip=client_ip,
@@ -812,7 +800,6 @@ class FileService:
         self,
         *,
         payload: DocumentMergeRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
@@ -823,7 +810,6 @@ class FileService:
         for file_id in payload.file_ids:
             file_info, current_parent_path = self._get_visible_file_and_path(
                 file_id=file_id,
-                show_hidden=show_hidden,
                 action_type="merge_documents",
                 current_user=current_user,
                 client_ip=client_ip,
@@ -896,7 +882,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> TextReadResponse:
@@ -904,7 +889,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="read_text",
             current_user=current_user,
             client_ip=client_ip,
@@ -961,7 +945,6 @@ class FileService:
         self,
         *,
         path_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> list[FileListItem]:
@@ -973,7 +956,7 @@ class FileService:
             self._record_failed_list(current_user.user_id, client_ip, path_id, "path_not_found")
             raise NotFoundError("目录不存在")
 
-        if parent_path.is_hidden and not include_hidden:
+        if not self._path_visible(parent_path, include_hidden=include_hidden):
             self._record_failed_list(current_user.user_id, client_ip, path_id, "hidden_path_not_allowed")
             raise NotFoundError("目录不存在")
 
@@ -1056,7 +1039,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
@@ -1064,7 +1046,6 @@ class FileService:
 
         file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="get_file_detail",
             current_user=current_user,
             client_ip=client_ip,
@@ -1089,7 +1070,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> tuple[FileInfo, Iterator[bytes]]:
@@ -1097,7 +1077,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="export_file",
             current_user=current_user,
             client_ip=client_ip,
@@ -1119,7 +1098,6 @@ class FileService:
         self,
         *,
         payload: FileExportRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> tuple[str, str, int, Iterator[bytes]]:
@@ -1128,7 +1106,6 @@ class FileService:
         if len(payload.file_ids) == 1:
             file_info, chunks = self.export_file_content(
                 file_id=payload.file_ids[0],
-                show_hidden=show_hidden,
                 current_user=current_user,
                 client_ip=client_ip,
             )
@@ -1144,7 +1121,6 @@ class FileService:
             for file_id in payload.file_ids:
                 file_info, _parent_path = self._get_visible_file_and_path(
                     file_id=file_id,
-                    show_hidden=show_hidden,
                     action_type="export_files",
                     current_user=current_user,
                     client_ip=client_ip,
@@ -1191,7 +1167,6 @@ class FileService:
         *,
         file_id: str,
         payload: FileUpdateRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
@@ -1199,7 +1174,6 @@ class FileService:
 
         file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="update_file_remark",
             current_user=current_user,
             client_ip=client_ip,
@@ -1247,7 +1221,6 @@ class FileService:
         self,
         *,
         query: str,
-        show_hidden: bool | None,
         limit: int,
         current_user: UserAccount,
         client_ip: str | None,
@@ -1288,7 +1261,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> tuple[FileInfo, Iterator[bytes]]:
@@ -1296,7 +1268,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="preview_file",
             current_user=current_user,
             client_ip=client_ip,
@@ -1367,7 +1338,6 @@ class FileService:
         *,
         file_id: str,
         payload: FileTagsUpdateRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
@@ -1375,7 +1345,6 @@ class FileService:
 
         file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="update_file_tags",
             current_user=current_user,
             client_ip=client_ip,
@@ -1406,7 +1375,6 @@ class FileService:
         *,
         file_id: str,
         payload: FileMoveRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileDetailResponse:
@@ -1414,14 +1382,13 @@ class FileService:
 
         file_info, parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="move_file",
             current_user=current_user,
             client_ip=client_ip,
         )
         target_path = self.path_repository.get_active_by_path_id(payload.path_id)
         include_hidden = self._include_hidden_files(current_user=current_user)
-        if target_path is None or (target_path.is_hidden and not include_hidden):
+        if target_path is None or not self._path_visible(target_path, include_hidden=include_hidden):
             self._record_file_action_failure(
                 user_id=current_user.user_id,
                 client_ip=client_ip,
@@ -1488,7 +1455,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> None:
@@ -1496,7 +1462,6 @@ class FileService:
 
         file_info, _parent_path = self._get_visible_file_and_path(
             file_id=file_id,
-            show_hidden=show_hidden,
             action_type="delete_file",
             current_user=current_user,
             client_ip=client_ip,
@@ -1523,7 +1488,6 @@ class FileService:
         self,
         *,
         payload: FileBatchDeleteRequest,
-        show_hidden: bool | None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> None:
@@ -1534,7 +1498,6 @@ class FileService:
             for file_id in payload.file_ids:
                 file_info, _parent_path = self._get_visible_file_and_path(
                     file_id=file_id,
-                    show_hidden=show_hidden,
                     action_type="delete_files",
                     current_user=current_user,
                     client_ip=client_ip,
@@ -1687,7 +1650,6 @@ class FileService:
         self,
         *,
         file_id: str,
-        show_hidden: bool | None,
         action_type: str,
         current_user: UserAccount,
         client_ip: str | None,
@@ -1717,7 +1679,17 @@ class FileService:
             raise NotFoundError("文件不存在")
 
         include_hidden = self._include_hidden_files(current_user=current_user)
-        if (file_info.is_hidden or parent_path.is_hidden) and not include_hidden:
+        if file_info.is_hidden and not include_hidden:
+            self._record_file_action_failure(
+                user_id=current_user.user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type=action_type,
+                reason="hidden_file_not_allowed",
+            )
+            raise NotFoundError("文件不存在")
+
+        if not self._path_visible(parent_path, include_hidden=include_hidden):
             self._record_file_action_failure(
                 user_id=current_user.user_id,
                 client_ip=client_ip,
@@ -1775,7 +1747,17 @@ class FileService:
             )
             raise NotFoundError("文件不存在")
 
-        if (file_info.is_hidden or parent_path.is_hidden) and not include_hidden:
+        if file_info.is_hidden and not include_hidden:
+            self._record_file_action_failure(
+                user_id=user_id,
+                client_ip=client_ip,
+                file_id=file_id,
+                action_type=action_type,
+                reason="hidden_file_not_allowed",
+            )
+            raise NotFoundError("文件不存在")
+
+        if not self._path_visible(parent_path, include_hidden=include_hidden):
             self._record_file_action_failure(
                 user_id=user_id,
                 client_ip=client_ip,
@@ -2017,7 +1999,11 @@ class FileService:
         parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)
         if parent_path is None:
             return False
-        return include_hidden or not parent_path.is_hidden
+        return self._path_visible(parent_path, include_hidden=include_hidden)
+
+    def _path_visible(self, path: FilePath, *, include_hidden: bool) -> bool:
+        paths = {item.path_id: item for item in self.path_repository.list_active(include_hidden=True)}
+        return self._path_and_ancestors_visible(path, path_by_id=paths) if not include_hidden else True
 
     @staticmethod
     def _logical_path(parent_path: FilePath, file_info: FileInfo) -> str:

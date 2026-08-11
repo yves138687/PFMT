@@ -451,6 +451,46 @@ async function saveSettings() {
           </el-table-column>
         </el-table>
 
+        <div class="settings-view__provider-cards" aria-label="模型配置列表">
+          <article v-for="provider in form.aiProviders" :key="provider.id" class="settings-view__provider-card">
+            <div class="settings-view__provider-card-heading">
+              <strong>{{ provider.name || '未命名模型' }}</strong>
+              <el-button :icon="Delete" circle aria-label="删除模型配置" @click="removeAiProvider(provider.id)" />
+            </div>
+            <div class="settings-view__provider-card-switches">
+              <el-switch v-model="provider.enabled" active-text="启用" @change="handleProviderEnabledChange(provider)" />
+              <el-radio v-model="form.activeAiProviderId" :label="provider.id" :disabled="!provider.enabled">默认模型</el-radio>
+            </div>
+            <el-form label-position="top" class="settings-view__provider-card-form">
+              <el-form-item label="名称">
+                <el-input v-model="provider.name" placeholder="OpenAI 主模型" />
+              </el-form-item>
+              <el-form-item label="接口类型">
+                <el-select v-model="provider.provider_type">
+                  <el-option
+                    v-for="option in providerTypeOptions"
+                    :key="option.value"
+                    :label="option.label"
+                    :value="option.value"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="API URL">
+                <el-input v-model="provider.base_url" placeholder="https://api.openai.com/v1" />
+              </el-form-item>
+              <el-form-item label="模型名称">
+                <el-input v-model="provider.model_name" placeholder="gpt-4.1" />
+              </el-form-item>
+              <el-form-item label="API Key">
+                <el-input v-model="provider.api_key" type="password" show-password placeholder="留空则不覆盖" />
+                <el-tag size="small" :type="provider.api_key_configured ? 'success' : 'info'">
+                  {{ provider.api_key_configured ? '已配置' : '未配置' }}
+                </el-tag>
+              </el-form-item>
+            </el-form>
+          </article>
+        </div>
+
         <el-empty
           v-if="form.aiProviders.length === 0"
           description="暂无 AI 模型配置"
@@ -543,6 +583,10 @@ async function saveSettings() {
   width: 100%;
 }
 
+.settings-view__provider-cards {
+  display: none;
+}
+
 .settings-view__cell-control {
   width: 100%;
 }
@@ -555,6 +599,26 @@ async function saveSettings() {
 }
 
 @media (max-width: 720px) {
+  .settings-view :deep(.el-form-item) {
+    display: block;
+    margin-bottom: 18px;
+  }
+
+  .settings-view :deep(.el-form-item__label) {
+    display: block;
+    width: auto !important;
+    height: auto;
+    padding: 0 0 7px;
+    line-height: 1.4;
+    text-align: left;
+  }
+
+  .settings-view :deep(.el-form-item__content) {
+    display: block;
+    margin-left: 0 !important;
+    line-height: normal;
+  }
+
   .settings-view__help {
     display: block;
     margin: 8px 0 0;
@@ -562,6 +626,69 @@ async function saveSettings() {
 
   .settings-view__key-cell {
     grid-template-columns: 1fr;
+  }
+
+  .settings-view__verify-input,
+  .settings-view__select {
+    max-width: none;
+  }
+
+  .settings-view__verify-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-view__verify-row > .el-button {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .settings-view__provider-table {
+    display: none;
+  }
+
+  .settings-view__provider-cards {
+    display: grid;
+    gap: 12px;
+  }
+
+  .settings-view__provider-card {
+    padding: 14px;
+    border: 1px solid var(--pfmt-border-soft);
+    border-radius: 8px;
+  }
+
+  .settings-view__provider-card-heading,
+  .settings-view__provider-card-switches {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .settings-view__provider-card-heading strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .settings-view__provider-card-switches {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    margin: 12px 0 4px;
+  }
+
+  .settings-view__provider-card-form :deep(.el-form-item) {
+    margin-bottom: 12px;
+  }
+
+  .settings-view__provider-card-form :deep(.el-form-item:last-child) {
+    margin-bottom: 0;
+  }
+
+  .settings-view__provider-card-form :deep(.el-tag) {
+    margin-top: 8px;
   }
 }
 </style>

@@ -98,7 +98,7 @@
 职责：
 
 - 保存目录树结构
-- 支持普通路径、私密路径
+- 支持目录树组织；隐藏状态只以 `is_hidden` 为准
 - 支持父子级关系
 - 保存路径隐藏状态
 
@@ -430,7 +430,7 @@
 | `path_id` | `VARCHAR(64)` | 路径稳定唯一标识 |
 | `parent_path_id` | `VARCHAR(64)` | 父路径标识，根节点可为空 |
 | `path_name` | `VARCHAR(255)` | 路径名称 |
-| `path_type` | `VARCHAR(32)` | 路径类型，如 `normal` / `private` |
+| `path_type` | `VARCHAR(32)` | 历史兼容字段，新业务入口不再使用；创建时固定写入 `normal` |
 | `path_level` | `INTEGER` | 路径层级 |
 | `sort_index` | `INTEGER` | 排序值 |
 | `full_path` | `TEXT` | 冗余保存完整路径字符串 |
@@ -464,7 +464,7 @@
 | `summary_source` | `VARCHAR(32)` | 摘要来源，如 `manual` / `ai` |
 | `summary_updated_at` | `DATETIME` | 摘要更新时间 |
 | `is_hidden` | `BOOLEAN` | 当前文件是否隐藏 |
-| `visibility_type` | `VARCHAR(32)` | 可见性类型，如 `normal` / `private` |
+| `visibility_type` | `VARCHAR(32)` | 历史兼容字段，新业务入口不再使用；文件可见性只以 `is_hidden` 为准 |
 | `status` | `VARCHAR(32)` | 文件状态，如 `active` / `deleted` / `archived` |
 | `created_by` | `VARCHAR(64)` | 创建人用户标识 |
 | `updated_by` | `VARCHAR(64)` | 更新人用户标识 |

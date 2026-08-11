@@ -33,7 +33,7 @@ function filterNode(value: string, data: FilePathNode) {
 }
 
 async function refreshTree() {
-  await pathStore.loadTree(settingsStore.showHiddenContent)
+  await pathStore.loadTree()
 }
 
 function handleNodeClick(node: FilePathNode) {

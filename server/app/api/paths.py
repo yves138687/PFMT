@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_client_ip, get_current_user, get_db_session
@@ -12,13 +12,12 @@ router = APIRouter()
 
 @router.get("/tree", response_model=list[PathTreeNode])
 def get_path_tree(
-    show_hidden: bool | None = Query(default=None),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> list[PathTreeNode]:
     """读取目录树，是否包含隐藏目录由当前会话开关决定。"""
 
-    return PathService(db).get_tree(show_hidden=show_hidden, current_user=current_user)
+    return PathService(db).get_tree(current_user=current_user)
 
 
 @router.post("", response_model=PathRead, status_code=status.HTTP_201_CREATED)

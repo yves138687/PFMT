@@ -29,7 +29,7 @@ class PathService:
         self.audit_service = AuditService(db)
         self.storage_service = StorageService(self.settings)
 
-    def get_tree(self, *, show_hidden: bool | None = None, current_user: UserAccount | None = None) -> list[PathTreeNode]:
+    def get_tree(self, *, current_user: UserAccount | None = None) -> list[PathTreeNode]:
         """读取目录树；是否包含隐藏目录只由当前会话开关决定。"""
 
         include_hidden = self._include_hidden(current_user=current_user)

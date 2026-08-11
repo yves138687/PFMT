@@ -242,13 +242,12 @@ def update_settings_compat(
 
 @router.get("/paths/tree")
 def get_path_tree_compat(
-    show_hidden: bool | None = None,
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
     """兼容 /api/paths/tree 旧响应包裹结构。"""
 
-    return {"nodes": PathService(db).get_tree(show_hidden=show_hidden, current_user=current_user)}
+    return {"nodes": PathService(db).get_tree(current_user=current_user)}
 
 
 @router.post("/paths", response_model=PathRead)
@@ -269,13 +268,12 @@ def create_path_compat(
 
 @router.get("/files/tree")
 def get_file_tree_compat(
-    show_hidden: bool | None = None,
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
 ) -> dict[str, Any]:
     """兼容 /api/files/tree 旧文件树接口。"""
 
-    nodes = PathService(db).get_tree(show_hidden=show_hidden, current_user=current_user)
+    nodes = PathService(db).get_tree(current_user=current_user)
     return {"nodes": [_compat_tree_node(node) for node in nodes]}
 
 
@@ -337,7 +335,6 @@ def read_markdown_compat(
 
     return FileService(db, settings).read_markdown(
         file_id=file_id,
-        show_hidden=None,
         current_user=current_user,
         client_ip=client_ip,
     )

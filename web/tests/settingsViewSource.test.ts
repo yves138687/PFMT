@@ -25,4 +25,13 @@ describe('SettingsView source contract', () => {
     expect(source).toContain('留空则不覆盖')
     expect(source).toContain('新增配置')
   })
+
+  it('uses provider cards and stacked form controls on small screens', () => {
+    expect(source).toContain('settings-view__provider-cards')
+    expect(source).toContain('settings-view__provider-card')
+    expect(source).toContain('label-position="top" class="settings-view__provider-card-form"')
+    expect(source).toContain('@media (max-width: 720px)')
+    expect(source).toContain('margin-left: 0 !important')
+    expect(source).toContain('.settings-view__provider-table {\n    display: none;')
+  })
 })

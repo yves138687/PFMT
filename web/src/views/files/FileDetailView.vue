@@ -70,7 +70,7 @@ async function loadMarkdown() {
 
   markdownLoading.value = true
   try {
-    const response = await filesApi.getMarkdownFile(fileId.value, settingsStore.showHiddenContent)
+    const response = await filesApi.getMarkdownFile(fileId.value)
     markdownContent.value = response.content
   } finally {
     markdownLoading.value = false
@@ -85,7 +85,7 @@ async function loadText() {
 
   textLoading.value = true
   try {
-    const response = await filesApi.getTextFile(fileId.value, settingsStore.showHiddenContent)
+    const response = await filesApi.getTextFile(fileId.value)
     textContent.value = response.content
   } finally {
     textLoading.value = false
@@ -100,7 +100,7 @@ async function loadPreviewBlob() {
 
   previewLoading.value = true
   try {
-    const blob = await filesApi.getPreviewBlob(fileId.value, settingsStore.showHiddenContent)
+    const blob = await filesApi.getPreviewBlob(fileId.value)
     previewUrl.value = URL.createObjectURL(blob)
   } finally {
     previewLoading.value = false
@@ -118,7 +118,7 @@ async function loadFileDetail() {
   loading.value = true
   try {
     await ensureSettingsLoaded()
-    detail.value = await filesApi.getFileDetail(fileId.value, settingsStore.showHiddenContent)
+    detail.value = await filesApi.getFileDetail(fileId.value)
     if (detail.value.file_type === 'text') {
       void router.replace({
         name: 'document',
@@ -153,7 +153,7 @@ async function exportCurrentFile() {
 
   exportLoading.value = true
   try {
-    const response = await filesApi.exportFile(detail.value.file_id, settingsStore.showHiddenContent)
+    const response = await filesApi.exportFile(detail.value.file_id)
     saveBlobResponse(response, detail.value.original_name)
     ElMessage.success('文件已开始导出')
   } finally {

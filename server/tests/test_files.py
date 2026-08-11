@@ -1023,6 +1023,108 @@ def test_hidden_file_detail_and_markdown_respect_visibility_flag(
     assert visible_detail.json()["is_hidden"] is True
 
 
+def test_hidden_parent_and_ancestor_hide_child_files_from_all_read_paths(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """隐藏祖先目录下的非隐藏文件不能通过读取、搜索、导出或嵌入链路绕过会话开关。"""
+
+    hidden_parent = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Hidden Parent", "parent_path_id": "root", "is_hidden": True},
+    )
+    assert hidden_parent.status_code == 201
+
+    enable_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert enable_response.status_code == 200
+
+    child = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Visible Child", "parent_path_id": hidden_parent.json()["path_id"]},
+    )
+    assert child.status_code == 201
+    child_path_id = child.json()["path_id"]
+
+    text_payload = b"ancestor-hidden searchable alpha"
+    text_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": child_path_id},
+        files={"file": ("ancestor-note.txt", text_payload, "text/plain")},
+    )
+    image_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": child_path_id},
+        files={"file": ("ancestor-image.png", b"ancestor-png", "image/png")},
+    )
+    video_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": child_path_id},
+        files={"file": ("ancestor-video.mp4", b"ancestor-video", "video/mp4")},
+    )
+    assert text_upload.status_code == 201
+    assert image_upload.status_code == 201
+    assert video_upload.status_code == 201
+    text_id = text_upload.json()["file_id"]
+    image_id = image_upload.json()["file_id"]
+    video_id = video_upload.json()["file_id"]
+
+    disable_response = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": False},
+    )
+    assert disable_response.status_code == 200
+
+    assert client.get("/api/files", headers=auth_headers, params={"path_id": child_path_id}).status_code == 404
+    assert client.get(f"/api/files/{text_id}", headers=auth_headers, params={"show_hidden": "true"}).status_code == 404
+    assert client.get(f"/api/files/{text_id}/text", headers=auth_headers).status_code == 404
+    assert client.get(f"/api/files/{text_id}/document", headers=auth_headers).status_code == 404
+    assert client.get("/api/files/search", headers=auth_headers, params={"q": "ancestor-hidden"}).json()["items"] == []
+    assert (
+        client.get(
+            "/api/files/search",
+            headers=auth_headers,
+            params={"q": "ancestor-hidden", "show_hidden": "true"},
+        ).json()["items"]
+        == []
+    )
+    assert client.get(f"/api/files/{text_id}/export", headers=auth_headers, params={"show_hidden": "true"}).status_code == 404
+    assert client.post("/api/files/export", headers=auth_headers, json={"file_ids": [text_id]}).status_code == 404
+    assert client.get(f"/api/files/{image_id}/preview", headers=auth_headers).status_code == 404
+    assert client.post(f"/api/files/{image_id}/embed-token", headers=auth_headers, params={"show_hidden": "true"}).status_code == 404
+    assert client.post(f"/api/files/{video_id}/preview-token", headers=auth_headers).status_code == 404
+
+    enable_again = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert enable_again.status_code == 200
+
+    visible_list = client.get("/api/files", headers=auth_headers, params={"path_id": child_path_id})
+    assert visible_list.status_code == 200
+    assert {item["file_id"] for item in visible_list.json()} == {text_id, image_id, video_id}
+    assert client.get(f"/api/files/{text_id}/text", headers=auth_headers).json()["content"] == text_payload.decode()
+    assert client.get(f"/api/files/{text_id}/export", headers=auth_headers).content == text_payload
+    assert client.get(f"/api/files/{image_id}/preview", headers=auth_headers).content == b"ancestor-png"
+
+    embed_token = client.post(f"/api/files/{image_id}/embed-token", headers=auth_headers)
+    assert embed_token.status_code == 200
+    assert client.get(embed_token.json()["url"]).content == b"ancestor-png"
+
+    preview_token = client.post(f"/api/files/{video_id}/preview-token", headers=auth_headers)
+    assert preview_token.status_code == 200
+    assert client.get(preview_token.json()["preview_url"]).content == b"ancestor-video"
+
+
 def test_non_markdown_file_still_rejects_markdown_read(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

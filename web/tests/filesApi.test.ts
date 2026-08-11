@@ -65,7 +65,7 @@ describe('filesApi', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.getFileDetail('file_1', true)
+    await filesApi.getFileDetail('file_1')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -91,7 +91,7 @@ describe('filesApi', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.updateFileRemark('file_1', '备注', false)
+    await filesApi.updateFileRemark('file_1', '备注')
 
     const init = fetchMock.mock.calls[0][1] as RequestInit
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
@@ -126,8 +126,7 @@ describe('filesApi', () => {
         original_name: 'renamed.md',
         summary_content: '摘要',
         is_hidden: true
-      },
-      true
+      }
     )
 
     const init = fetchMock.mock.calls[0][1] as RequestInit
@@ -145,7 +144,7 @@ describe('filesApi', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ items: [], total: 0 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.searchFiles('alpha', false)
+    await filesApi.searchFiles('alpha')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/search?q=alpha&limit=50')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -192,8 +191,8 @@ describe('filesApi', () => {
       .mockResolvedValueOnce(new Response('blob-content', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.updateFileTags('file_1', ['work'], true)
-    await filesApi.getPreviewBlob('file_1', true)
+    await filesApi.updateFileTags('file_1', ['work'])
+    await filesApi.getPreviewBlob('file_1')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/tags')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -214,7 +213,7 @@ describe('filesApi', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.getMarkdownFile('file_1', true)
+    await filesApi.getMarkdownFile('file_1')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/markdown')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -233,7 +232,7 @@ describe('filesApi', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.getTextFile('file_1', true)
+    await filesApi.getTextFile('file_1')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/text')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -250,7 +249,7 @@ describe('filesApi', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.issuePreviewToken('file_1', true)
+    await filesApi.issuePreviewToken('file_1')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/preview-token')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -361,16 +360,15 @@ describe('filesApi', () => {
       )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.getDocument('file_1', true)
-    await filesApi.saveDocument('file_1', { document_format: 'markdown', content: '# Saved' }, true)
-    await filesApi.convertDocument('file_1', { target_format: 'html', target_name: 'note.html' }, true)
+    await filesApi.getDocument('file_1')
+    await filesApi.saveDocument('file_1', { document_format: 'markdown', content: '# Saved' })
+    await filesApi.convertDocument('file_1', { target_format: 'html', target_name: 'note.html' })
     await filesApi.mergeDocuments(
       {
         file_ids: ['file_1', 'file_2'],
         target_format: 'markdown',
         target_name: 'merged.md'
-      },
-      true
+      }
     )
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/document')
@@ -416,7 +414,7 @@ describe('filesApi', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.moveFile('file_1', 'path_2', true)
+    await filesApi.moveFile('file_1', 'path_2')
 
     const init = fetchMock.mock.calls[0][1] as RequestInit
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/move')
@@ -429,7 +427,7 @@ describe('filesApi', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.deleteFile('file_1', false)
+    await filesApi.deleteFile('file_1')
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -440,7 +438,7 @@ describe('filesApi', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.deleteFiles(['file_1', 'file_2'], true)
+    await filesApi.deleteFiles(['file_1', 'file_2'])
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/delete')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
@@ -457,8 +455,8 @@ describe('filesApi', () => {
       .mockResolvedValueOnce(new Response('batch-export', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    await filesApi.exportFile('file_1', true)
-    await filesApi.exportFiles(['file_1', 'file_2'], true)
+    await filesApi.exportFile('file_1')
+    await filesApi.exportFiles(['file_1', 'file_2'])
 
     expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/export')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')

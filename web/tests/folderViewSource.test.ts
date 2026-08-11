@@ -62,6 +62,15 @@ describe('FolderView source contract', () => {
     expect(source).not.toContain('openMoveFile(row)')
   })
 
+  it('keeps batch actions out of the default toolbar until files are selected', () => {
+    expect(source).not.toContain('<h2>文件列表</h2>')
+    expect(source).toContain('class="folder-view__selection-bar"')
+    expect(source).toContain('v-if="selectedFiles.length && !isMobileViewport"')
+    expect(source).toContain('已选择 {{ selectedFiles.length }} 项')
+    expect(source).toContain('class="folder-view__filters"')
+    expect(source).toContain('class="folder-view__view-tools"')
+  })
+
   it('exports selected files and offers row-level export', () => {
     expect(source).toContain('导出所选')
     expect(source).toContain('exportSelectedFiles')
@@ -147,6 +156,13 @@ describe('FolderView source contract', () => {
     expect(source).toContain('batchActionsDrawerVisible')
     expect(source).toContain('grid-template-columns: 32px 42px minmax(0, 1fr) 40px')
     expect(source).toContain('@media (max-width: 820px)')
+  })
+
+  it('keeps dense file rows and dialogs within narrow phone viewports', () => {
+    expect(source).toContain('@media (max-width: 360px)')
+    expect(source).toContain('grid-template-columns: 28px 38px minmax(0, 1fr) 36px')
+    expect(source).toContain('width: calc(100vw - 24px) !important')
+    expect(source).toContain('max-height: min(62vh, 620px)')
   })
 
   it('does not expose private directory type in create folder dialog', () => {

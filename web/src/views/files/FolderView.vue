@@ -353,7 +353,7 @@ async function syncTableSelection() {
 async function ensurePathTree() {
   const hasCurrentPath = pathOptions.value.some((item) => item.value === currentPathId.value)
   if (!hasCurrentPath) {
-    await pathStore.loadTree(settingsStore.showHiddenContent)
+    await pathStore.loadTree()
   }
 }
 
@@ -433,7 +433,7 @@ async function loadVideoPreview(index: number) {
   videoPreviewError.value = ''
   videoPreviewUrl.value = ''
   try {
-    const response = await filesApi.issuePreviewToken(file.file_id, settingsStore.showHiddenContent)
+    const response = await filesApi.issuePreviewToken(file.file_id)
     videoPreviewUrl.value = new URL(response.preview_url, window.location.origin).toString()
   } finally {
     videoPreviewLoading.value = false
@@ -557,7 +557,7 @@ async function loadImagePreviewAt(index: number) {
 
   imagePreviewLoadingIds.value = new Set([...imagePreviewLoadingIds.value, file.file_id])
   try {
-    const blob = await filesApi.getPreviewBlob(file.file_id, settingsStore.showHiddenContent)
+    const blob = await filesApi.getPreviewBlob(file.file_id)
     const nextUrls = { ...imagePreviewUrls.value }
     nextUrls[file.file_id] = URL.createObjectURL(blob)
     imagePreviewUrls.value = nextUrls
@@ -776,7 +776,7 @@ async function createFolder() {
     })
     createFolderVisible.value = false
     ElMessage.success('目录已创建')
-    await pathStore.loadTree(settingsStore.showHiddenContent)
+    await pathStore.loadTree()
     await router.push({
       name: 'folder',
       params: {
@@ -870,10 +870,7 @@ async function exportSelectedFiles() {
 
   exportFilesLoading.value = true
   try {
-    const response = await filesApi.exportFiles(
-      selectedFiles.value.map((file) => file.file_id),
-      settingsStore.showHiddenContent
-    )
+    const response = await filesApi.exportFiles(selectedFiles.value.map((file) => file.file_id))
     const fallbackName =
       selectedFiles.value.length === 1 ? selectedFiles.value[0].original_name : 'pfmt-export.zip'
     saveBlobResponse(response, fallbackName)
@@ -884,7 +881,7 @@ async function exportSelectedFiles() {
 }
 
 async function exportSingleFile(file: FileInfo) {
-  const response = await filesApi.exportFile(file.file_id, settingsStore.showHiddenContent)
+  const response = await filesApi.exportFile(file.file_id)
   saveBlobResponse(response, file.original_name)
   ElMessage.success('文件已开始导出')
 }
@@ -919,7 +916,7 @@ async function deleteSelectedFiles() {
 
   deleteFilesLoading.value = true
   try {
-    await filesApi.deleteFiles([...fileIds], settingsStore.showHiddenContent)
+    await filesApi.deleteFiles([...fileIds])
     if (propertiesFile.value && fileIds.has(propertiesFile.value.file_id)) {
       propertiesVisible.value = false
       propertiesFile.value = null
@@ -951,8 +948,7 @@ async function mergeSelectedDocuments() {
         file_ids: mergeDocumentOrder.value.map((file) => file.file_id),
         target_format: mergeDocumentForm.value.target_format,
         target_name: normalizeOptionalText(mergeDocumentForm.value.target_name)
-      },
-      settingsStore.showHiddenContent
+      }
     )
     mergeDocumentVisible.value = false
     mergeDocumentOrder.value = []
@@ -987,9 +983,7 @@ async function moveSelectedFiles() {
   moveFileLoading.value = true
   try {
     await Promise.all(
-      selectedFiles.value.map((file) =>
-        filesApi.moveFile(file.file_id, moveFileTargetPathId.value, settingsStore.showHiddenContent)
-      )
+      selectedFiles.value.map((file) => filesApi.moveFile(file.file_id, moveFileTargetPathId.value))
     )
     moveFileVisible.value = false
     ElMessage.success(`已移动 ${selectedFiles.value.length} 个文件`)
@@ -1012,7 +1006,7 @@ async function deleteFile(file: FileInfo) {
     return
   }
 
-  await filesApi.deleteFile(file.file_id, settingsStore.showHiddenContent)
+  await filesApi.deleteFile(file.file_id)
   if (propertiesFile.value?.file_id === file.file_id) {
     propertiesVisible.value = false
     propertiesFile.value = null
@@ -1033,8 +1027,7 @@ async function toggleFileHidden(file: FileInfo) {
     file.file_id,
     {
       is_hidden: targetHidden
-    },
-    settingsStore.showHiddenContent || targetHidden
+    }
   )
   ElMessage.success(targetHidden ? '文件已隐藏' : '文件已取消隐藏')
   handleFileSaved(updated)
@@ -1087,7 +1080,7 @@ async function savePathMetadata() {
     })
     editPathVisible.value = false
     ElMessage.success('目录属性已保存')
-    await pathStore.loadTree(settingsStore.showHiddenContent || updated.is_hidden)
+    await pathStore.loadTree()
     if (updated.is_hidden && !settingsStore.showHiddenContent) {
       await router.push({ name: 'folder', params: { pathId: updated.parent_path_id ?? 'root' } })
     }
@@ -1111,7 +1104,7 @@ async function movePath() {
     const moved = await pathsApi.movePath(currentPathId.value, movePathTargetParentId.value)
     movePathVisible.value = false
     ElMessage.success('目录已移动')
-    await pathStore.loadTree(settingsStore.showHiddenContent)
+    await pathStore.loadTree()
     await router.push({
       name: 'folder',
       params: {
@@ -1142,7 +1135,7 @@ async function deleteCurrentPath() {
 
   await pathsApi.deletePath(currentPathId.value)
   ElMessage.success('目录已删除')
-  await pathStore.loadTree(settingsStore.showHiddenContent)
+  await pathStore.loadTree()
   await router.push({
     name: 'folder',
     params: {
@@ -1161,7 +1154,7 @@ async function loadFiles() {
   }
   loading.value = true
   try {
-    files.value = await filesApi.listFiles(currentPathId.value, settingsStore.showHiddenContent)
+    files.value = await filesApi.listFiles(currentPathId.value)
     const activeIds = new Set(files.value.map((file) => file.file_id))
     selectedFiles.value = selectedFiles.value.filter((file) => activeIds.has(file.file_id))
     void nextTick(syncTableSelection)
@@ -1273,10 +1266,9 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <section class="work-panel">
-      <div class="panel-header">
-        <h2>文件列表</h2>
-        <div class="folder-view__toolbar">
+    <section class="work-panel folder-view__panel">
+      <div class="folder-view__toolbar">
+        <div class="folder-view__filters">
           <el-input
             v-model="fileKeyword"
             clearable
@@ -1304,25 +1296,6 @@ onBeforeUnmount(() => {
             >
               <el-option v-for="tagName in tagOptions" :key="tagName" :label="tagName" :value="tagName" />
             </el-select>
-            <el-button :icon="Rank" :disabled="!selectedFiles.length" @click="openMoveSelectedFiles">
-              移动所选
-            </el-button>
-            <el-button :icon="Download" :disabled="!selectedFiles.length" :loading="exportFilesLoading" @click="exportSelectedFiles">
-              导出所选
-            </el-button>
-            <el-button
-              :icon="Delete"
-              type="danger"
-              plain
-              :disabled="!selectedFiles.length"
-              :loading="deleteFilesLoading"
-              @click="deleteSelectedFiles"
-            >
-              删除所选
-            </el-button>
-            <el-button :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
-              合并文档
-            </el-button>
           </template>
           <template v-else>
             <el-button :icon="Filter" @click="filterDrawerVisible = true">筛选</el-button>
@@ -1330,9 +1303,24 @@ onBeforeUnmount(() => {
               已选 {{ selectedFiles.length }}
             </el-button>
           </template>
+        </div>
+        <div class="folder-view__view-tools">
           <el-button v-if="isMobileViewport" :icon="Refresh" circle :loading="loading" aria-label="刷新文件列表" @click="loadFiles" />
           <el-button v-else :icon="Refresh" :loading="loading" @click="loadFiles">刷新</el-button>
           <el-segmented v-model="viewMode" :options="viewModeOptions" />
+        </div>
+      </div>
+      <div v-if="selectedFiles.length && !isMobileViewport" class="folder-view__selection-bar" aria-live="polite">
+        <span>已选择 {{ selectedFiles.length }} 项</span>
+        <div class="folder-view__selection-actions">
+          <el-button size="small" :icon="Rank" @click="openMoveSelectedFiles">移动</el-button>
+          <el-button size="small" :icon="Download" :loading="exportFilesLoading" @click="exportSelectedFiles">导出</el-button>
+          <el-button size="small" :icon="DocumentAdd" :disabled="!canMergeSelectedDocuments" @click="openMergeSelectedDocuments">
+            合并文档
+          </el-button>
+          <el-button size="small" :icon="Delete" type="danger" plain :loading="deleteFilesLoading" @click="deleteSelectedFiles">
+            删除
+          </el-button>
         </div>
       </div>
       <div v-loading="loading" class="panel-body">
@@ -1895,10 +1883,45 @@ onBeforeUnmount(() => {
 
 .folder-view__toolbar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--pfmt-border-soft);
+}
+
+.folder-view__filters,
+.folder-view__view-tools,
+.folder-view__selection-actions {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
+}
+
+.folder-view__filters {
+  min-width: 0;
+}
+
+.folder-view__view-tools {
+  flex: 0 0 auto;
   justify-content: flex-end;
-  gap: 10px;
+}
+
+.folder-view__selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 18px;
+  color: #1d4f91;
+  background: var(--pfmt-primary-soft);
+  border-bottom: 1px solid #cfe0ff;
+}
+
+.folder-view__selection-bar > span {
+  flex: 0 0 auto;
+  font-weight: 600;
 }
 
 .folder-view__filter {
@@ -2262,13 +2285,19 @@ onBeforeUnmount(() => {
 
   .folder-view__toolbar {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     justify-content: stretch;
     gap: 8px;
+    padding: 12px;
+  }
+
+  .folder-view__filters,
+  .folder-view__view-tools {
+    display: contents;
   }
 
   .folder-view__filter--search,
-  .folder-view__toolbar .el-segmented {
+  .folder-view__view-tools .el-segmented {
     grid-column: 1 / -1;
     width: 100%;
   }
@@ -2289,6 +2318,51 @@ onBeforeUnmount(() => {
   .file-card {
     min-height: 190px;
     padding: 10px;
+  }
+
+  :global(.el-dialog) {
+    width: calc(100vw - 24px) !important;
+    max-width: 560px;
+    margin: 12px auto;
+  }
+
+  :global(.el-dialog__body) {
+    max-height: min(62vh, 620px);
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 360px) {
+  .folder-view__toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .folder-view__view-tools .el-segmented {
+    grid-column: 1 / -1;
+  }
+
+  .folder-view__actions > .el-button {
+    min-height: 40px;
+  }
+
+  .file-row {
+    grid-template-columns: 28px 38px minmax(0, 1fr) 36px;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .file-row__select {
+    width: 28px;
+  }
+
+  .file-row__icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .file-row__more {
+    width: 36px;
+    height: 36px;
   }
 }
 

@@ -217,7 +217,7 @@ flowchart TD
 
 职责：
 
-- 普通路径 / 私密路径管理
+- 普通目录 / 隐藏目录管理
 - 树状目录维护
 - 隐藏路径与隐藏文件规则管理
 
@@ -479,7 +479,7 @@ PFMT/
 - `auth`：登录、Token、会话
 - `files`：文件上传下载、流式加解密
 - `metadata`：元数据和标签管理
-- `paths`：目录树、普通路径、私密路径、隐藏规则
+- `paths`：目录树、普通目录、隐藏目录、隐藏规则
 - `ai`：AI 权限边界、上下文裁剪、模型调用
 - `backup`：备份包、Git 推送、恢复
 - `audit`：审计日志
@@ -517,7 +517,7 @@ PFMT/
 - `size`
 - `summary`
 - `is_hidden`
-- `visibility_type`
+- `visibility_type`：历史兼容字段，新业务可见性只以 `is_hidden` 为准
 - `created_at`
 - `updated_at`
 

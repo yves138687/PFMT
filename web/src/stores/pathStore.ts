@@ -40,10 +40,10 @@ export const usePathStore = defineStore('paths', {
     }
   },
   actions: {
-    async loadTree(showHidden: boolean) {
+    async loadTree() {
       this.loading = true
       try {
-        const tree = await pathsApi.getPathTree(showHidden)
+        const tree = await pathsApi.getPathTree()
         this.tree = tree.length > 0 ? tree : [ROOT_PATH]
       } catch {
         this.tree = [ROOT_PATH]

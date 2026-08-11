@@ -52,7 +52,7 @@ async function handleFileChange(file: { raw?: File }) {
   }
   uploading.value = true
   try {
-    const attachmentPathId = await ensureAttachmentFolder(props.parentPathId, settingsStore.showHiddenContent)
+    const attachmentPathId = await ensureAttachmentFolder(props.parentPathId)
     const uploaded = await filesApi.uploadFile({
       file: raw,
       pathId: attachmentPathId,
@@ -73,7 +73,7 @@ async function handleFileChange(file: { raw?: File }) {
 async function loadPickFiles() {
   pickLoading.value = true
   try {
-    const items = await filesApi.listFiles(props.parentPathId, settingsStore.showHiddenContent)
+    const items = await filesApi.listFiles(props.parentPathId)
     pickFiles.value = items
   } catch {
     pickFiles.value = []
@@ -90,7 +90,7 @@ async function searchPickFiles() {
   }
   pickLoading.value = true
   try {
-    const response = await filesApi.searchFiles(query, settingsStore.showHiddenContent)
+    const response = await filesApi.searchFiles(query)
     pickFiles.value = response.items
   } catch {
     pickFiles.value = []
