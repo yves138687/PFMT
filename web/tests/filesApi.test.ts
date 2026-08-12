@@ -201,6 +201,29 @@ describe('filesApi', () => {
     expect(String(fetchMock.mock.calls[1][0])).not.toContain('show_hidden')
   })
 
+  it('requests tag suggestions through the file endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        items: [
+          {
+            tag_name: '知识图谱',
+            score: 1001,
+            source: 'existing_tag_match',
+            existing_tag_id: 'tag_1',
+            matched_count: 3
+          }
+        ]
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await filesApi.suggestFileTags('file_1')
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/tag-suggestions')
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
+  })
+
   it('reads markdown content without manual follow-up action', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({

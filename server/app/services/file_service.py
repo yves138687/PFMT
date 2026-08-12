@@ -39,6 +39,8 @@ from app.schemas.file import (
     FileMoveRequest,
     FilePreviewTokenResponse,
     FileSearchResponse,
+    FileTagSuggestionItem,
+    FileTagSuggestionResponse,
     FileTagCreateRequest,
     FileTagItem,
     FileTagsUpdateRequest,
@@ -50,6 +52,7 @@ from app.schemas.file import (
 from app.services.audit_service import AuditService
 from app.services.setting_service import SettingService
 from app.services.storage_service import ContentRange, StorageService, StoredObject
+from app.services.tag_suggestion_service import DEFAULT_SUGGESTION_LIMIT, TagSuggestionService
 from app.utils.file_type import (
     detect_document_format,
     detect_file_type,
@@ -1433,6 +1436,65 @@ class FileService:
         self.db.commit()
         self.db.refresh(file_info)
         return self._to_detail_response(file_info, parent_path)
+
+    def suggest_file_tags(
+        self,
+        *,
+        file_id: str,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileTagSuggestionResponse:
+        """读取文档全文并生成候选标签，不修改标签关系。"""
+
+        file_info, _parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            action_type="suggest_file_tags",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        document_format = detect_document_format(file_info.file_ext, file_info.mime_type)
+        if not document_format or not is_text_file(file_info.file_ext, file_info.mime_type, file_info.file_type):
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="suggest_file_tags",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("当前文件类型暂不支持标签生成")
+
+        existing_tags = self.tag_repository.list_active()
+        suggestions = TagSuggestionService().suggest(
+            content_chunks=self.storage_service.iter_content_chunks(file_info),
+            document_format=document_format,
+            existing_tags=existing_tags,
+            limit=DEFAULT_SUGGESTION_LIMIT,
+        )
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="suggest_file_tags",
+            target_type="file",
+            target_id=file_id,
+            result="success",
+            detail={"count": len(suggestions), "document_format": document_format, "size_bytes": file_info.size_bytes},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return FileTagSuggestionResponse(
+            items=[
+                FileTagSuggestionItem(
+                    tag_name=item.tag_name,
+                    score=item.score,
+                    source=item.source,
+                    existing_tag_id=item.existing_tag_id,
+                    matched_count=item.matched_count,
+                )
+                for item in suggestions
+            ]
+        )
 
     def move_file(
         self,

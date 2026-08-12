@@ -336,6 +336,25 @@ class FileTagsUpdateRequest(BaseModel):
         return normalized
 
 
+FileTagSuggestionSource = Literal["existing_tag_match", "keyword_weight"]
+
+
+class FileTagSuggestionItem(BaseModel):
+    """文档标签建议项。"""
+
+    tag_name: str
+    score: float
+    source: FileTagSuggestionSource
+    existing_tag_id: str | None = None
+    matched_count: int | None = None
+
+
+class FileTagSuggestionResponse(BaseModel):
+    """文档标签建议响应。"""
+
+    items: list[FileTagSuggestionItem] = Field(default_factory=list)
+
+
 class FileSearchResponse(BaseModel):
     """元数据搜索响应。"""
 

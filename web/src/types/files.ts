@@ -28,6 +28,20 @@ export interface FileTag {
   tag_color?: string | null
 }
 
+export type FileTagSuggestionSource = 'existing_tag_match' | 'keyword_weight'
+
+export interface FileTagSuggestionItem {
+  tag_name: string
+  score: number
+  source: FileTagSuggestionSource
+  existing_tag_id?: string | null
+  matched_count?: number | null
+}
+
+export interface FileTagSuggestionResponse {
+  items: FileTagSuggestionItem[]
+}
+
 export interface FileDetail extends FileInfo {
   logical_path: string
 }

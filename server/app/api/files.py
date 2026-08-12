@@ -24,6 +24,7 @@ from app.schemas.file import (
     FileMoveRequest,
     FilePreviewTokenResponse,
     FileSearchResponse,
+    FileTagSuggestionResponse,
     FileTagsUpdateRequest,
     FileUpdateRequest,
     FileUploadResponse,
@@ -467,6 +468,23 @@ def update_file_tags(
     return FileService(db, settings).update_file_tags(
         file_id=file_id,
         payload=payload,
+        current_user=current_user,
+        client_ip=client_ip,
+    )
+
+
+@router.post("/{file_id}/tag-suggestions", response_model=FileTagSuggestionResponse)
+def suggest_file_tags(
+    file_id: str,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> FileTagSuggestionResponse:
+    """基于文档全文生成候选标签，结果只供用户选择，不自动写入。"""
+
+    return FileService(db, settings).suggest_file_tags(
+        file_id=file_id,
         current_user=current_user,
         client_ip=client_ip,
     )

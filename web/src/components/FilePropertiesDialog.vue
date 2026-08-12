@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 import { filesApi, tagsApi } from '@/api/files'
-import type { FileDetail, FileInfo, FileTag, FileType } from '@/types/files'
+import type { FileDetail, FileInfo, FileTag, FileTagSuggestionItem, FileType } from '@/types/files'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
 const props = defineProps<{
@@ -27,6 +27,9 @@ const remarkDraft = ref('')
 const summaryDraft = ref('')
 const hiddenDraft = ref(false)
 const tagDraft = ref<string[]>([])
+const tagSuggestions = ref<FileTagSuggestionItem[]>([])
+const tagSuggestionLoading = ref(false)
+const tagSuggestionLoaded = ref(false)
 
 const visible = computed({
   get: () => props.modelValue,
@@ -34,6 +37,10 @@ const visible = computed({
 })
 
 const displayFile = computed(() => detail.value ?? props.file ?? null)
+const visibleTagSuggestions = computed(() => {
+  const selected = new Set(tagDraft.value.map((tagName) => tagName.toLowerCase()))
+  return tagSuggestions.value.filter((item) => !selected.has(item.tag_name.toLowerCase()))
+})
 
 const fileTypeLabels: Record<FileType, string> = {
   text: '文本',
@@ -60,11 +67,17 @@ function syncDraft(file: FileDetail | FileInfo | null) {
   tagDraft.value = (file?.tags ?? []).map((tag) => tag.tag_name)
 }
 
+function resetTagSuggestions() {
+  tagSuggestions.value = []
+  tagSuggestionLoaded.value = false
+}
+
 async function loadDetail() {
   const fileId = props.fileId ?? props.file?.file_id
   if (!fileId) {
     detail.value = null
     syncDraft(null)
+    resetTagSuggestions()
     return
   }
 
@@ -74,8 +87,39 @@ async function loadDetail() {
     detail.value = response
     tagOptions.value = tags
     syncDraft(response)
+    resetTagSuggestions()
   } finally {
     loading.value = false
+  }
+}
+
+function addSuggestedTag(tagName: string) {
+  const normalized = tagName.trim()
+  if (!normalized) {
+    return
+  }
+  if (tagDraft.value.some((item) => item.toLowerCase() === normalized.toLowerCase())) {
+    return
+  }
+  tagDraft.value = [...tagDraft.value, normalized]
+}
+
+async function generateTagSuggestions() {
+  const file = displayFile.value
+  if (!file) {
+    return
+  }
+
+  tagSuggestionLoading.value = true
+  tagSuggestionLoaded.value = true
+  try {
+    const response = await filesApi.suggestFileTags(file.file_id)
+    tagSuggestions.value = response.items
+    if (response.items.length === 0) {
+      ElMessage.info('未找到合适的标签建议')
+    }
+  } finally {
+    tagSuggestionLoading.value = false
   }
 }
 
@@ -165,22 +209,53 @@ watch(
           />
         </el-form-item>
         <el-form-item label="标签">
-          <el-select
-            v-model="tagDraft"
-            multiple
-            filterable
-            allow-create
-            default-first-option
-            class="file-properties-dialog__tags"
-            placeholder="选择或输入标签"
-          >
-            <el-option
-              v-for="tag in tagOptions"
-              :key="tag.tag_id"
-              :label="tag.tag_name"
-              :value="tag.tag_name"
-            />
-          </el-select>
+          <div class="file-properties-dialog__tag-editor">
+            <el-select
+              v-model="tagDraft"
+              multiple
+              filterable
+              allow-create
+              default-first-option
+              class="file-properties-dialog__tags"
+              placeholder="选择或输入标签"
+            >
+              <el-option
+                v-for="tag in tagOptions"
+                :key="tag.tag_id"
+                :label="tag.tag_name"
+                :value="tag.tag_name"
+              />
+            </el-select>
+            <div class="file-properties-dialog__tag-actions">
+              <el-button
+                size="small"
+                :loading="tagSuggestionLoading"
+                :disabled="!displayFile"
+                @click="generateTagSuggestions"
+              >
+                生成建议
+              </el-button>
+            </div>
+            <div
+              v-if="tagSuggestionLoaded"
+              v-loading="tagSuggestionLoading"
+              class="file-properties-dialog__suggestions"
+            >
+              <el-tag
+                v-for="item in visibleTagSuggestions"
+                :key="`${item.source}:${item.tag_name}`"
+                class="file-properties-dialog__suggestion"
+                :type="item.source === 'existing_tag_match' ? 'success' : 'info'"
+                effect="plain"
+                @click="addSuggestedTag(item.tag_name)"
+              >
+                {{ item.tag_name }}
+              </el-tag>
+              <span v-if="!tagSuggestionLoading && visibleTagSuggestions.length === 0" class="file-properties-dialog__suggestion-empty">
+                暂无可添加建议
+              </span>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item v-if="showHidden || !displayFile.is_hidden" label="隐藏文件">
           <el-switch v-model="hiddenDraft" />
@@ -207,5 +282,33 @@ watch(
 
 .file-properties-dialog__tags {
   width: 100%;
+}
+
+.file-properties-dialog__tag-editor {
+  width: 100%;
+  display: grid;
+  gap: 8px;
+}
+
+.file-properties-dialog__tag-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.file-properties-dialog__suggestions {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.file-properties-dialog__suggestion {
+  cursor: pointer;
+}
+
+.file-properties-dialog__suggestion-empty {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 </style>

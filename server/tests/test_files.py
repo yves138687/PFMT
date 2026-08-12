@@ -503,6 +503,83 @@ def test_file_metadata_rename_hidden_summary_tags_and_search(
         assert len(db.execute(select(FileTagRel).where(FileTagRel.file_id == file_id)).scalars().all()) == 2
 
 
+def test_file_tag_suggestions_match_existing_tags_and_weight_full_document(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """标签建议读取全文：已有标签优先，后半段高频词不能被截断。"""
+
+    tag_response = client.post("/api/tags", headers=auth_headers, json={"tag_name": "知识图谱"})
+    assert tag_response.status_code == 201
+    first_half = ("普通内容 " * 1200).encode("utf-8")
+    second_half = ("向量检索 " * 220 + "知识图谱 " * 8).encode("utf-8")
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("large.md", "# 文档标题\n".encode("utf-8") + first_half + second_half, "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+
+    response = client.post(
+        f"/api/files/{upload_response.json()['file_id']}/tag-suggestions",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    names = [item["tag_name"] for item in items]
+    assert names[0] == "知识图谱"
+    assert items[0]["source"] == "existing_tag_match"
+    assert items[0]["matched_count"] >= 8
+    assert "向量检索" in names
+
+
+def test_file_tag_suggestions_respect_hidden_visibility_and_file_type(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """标签建议遵守隐藏过滤，且只支持文本型文档。"""
+
+    hidden_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true", "is_hidden": "true"},
+        files={"file": ("hidden.md", "隐藏内容 知识图谱".encode("utf-8"), "text/markdown")},
+    )
+    assert hidden_upload.status_code == 201
+
+    hidden_response = client.post(
+        f"/api/files/{hidden_upload.json()['file_id']}/tag-suggestions",
+        headers=auth_headers,
+    )
+    assert hidden_response.status_code == 404
+
+    visible_session = client.put(
+        "/api/auth/hidden-content",
+        headers=auth_headers,
+        json={"enabled": True},
+    )
+    assert visible_session.status_code == 200
+    visible_response = client.post(
+        f"/api/files/{hidden_upload.json()['file_id']}/tag-suggestions",
+        headers=auth_headers,
+    )
+    assert visible_response.status_code == 200
+
+    image_upload = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("image.png", b"not-an-image", "image/png")},
+    )
+    assert image_upload.status_code == 201
+    unsupported_response = client.post(
+        f"/api/files/{image_upload.json()['file_id']}/tag-suggestions",
+        headers=auth_headers,
+    )
+    assert unsupported_response.status_code == 415
+    assert unsupported_response.json()["error_code"] == "unsupported_file_type"
+
+
 def test_image_preview_stream_decrypts_uploaded_content(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

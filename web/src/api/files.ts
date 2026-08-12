@@ -13,6 +13,7 @@ import type {
   FilePreviewToken,
   FileSearchResponse,
   FileTag,
+  FileTagSuggestionResponse,
   FileUpdatePayload,
   MarkdownFileContent,
   TextFileContent,
@@ -67,6 +68,9 @@ export const filesApi = {
         tag_names: tagNames
       }
     )
+  },
+  suggestFileTags(fileId: string) {
+    return http.post<FileTagSuggestionResponse>(`/files/${encodeURIComponent(fileId)}/tag-suggestions`)
   },
   moveFile(fileId: string, pathId: string) {
     return http.patch<FileDetail>(
