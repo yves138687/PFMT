@@ -192,6 +192,55 @@ def _patch_sqlite_schema(engine: Engine) -> None:
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_file_key_key_id ON file_key(key_id)"))
         connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_file_key_one_active ON file_key(is_active) WHERE is_active = 1"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS idx_file_key_active ON file_key(is_active, status)"))
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS ai_task (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    task_id VARCHAR(64) NOT NULL,
+                    task_type VARCHAR(32) NOT NULL,
+                    file_id VARCHAR(64) NOT NULL,
+                    selected_range TEXT,
+                    read_scope TEXT NOT NULL,
+                    model_provider VARCHAR(128),
+                    model_name VARCHAR(128),
+                    prompt_text TEXT,
+                    task_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                    error_message TEXT,
+                    created_by VARCHAR(64),
+                    created_at DATETIME NOT NULL,
+                    completed_at DATETIME,
+                    CONSTRAINT ck_ai_task_type CHECK (task_type IN ('summary', 'qa', 'rewrite', 'translate', 'continue', 'polish', 'replace')),
+                    CONSTRAINT ck_ai_task_status CHECK (task_status IN ('pending', 'running', 'success', 'failed', 'cancelled')),
+                    CONSTRAINT uq_ai_task_task_id UNIQUE (task_id),
+                    FOREIGN KEY (file_id) REFERENCES file_info(file_id) ON DELETE CASCADE ON UPDATE CASCADE,
+                    FOREIGN KEY (created_by) REFERENCES user_account(user_id) ON DELETE SET NULL ON UPDATE CASCADE
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS ai_message (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id VARCHAR(64) NOT NULL,
+                    task_id VARCHAR(64) NOT NULL,
+                    role VARCHAR(32) NOT NULL,
+                    message_content TEXT NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    CONSTRAINT ck_ai_message_role CHECK (role IN ('user', 'assistant', 'system')),
+                    CONSTRAINT uq_ai_message_message_id UNIQUE (message_id),
+                    FOREIGN KEY (task_id) REFERENCES ai_task(task_id) ON DELETE CASCADE ON UPDATE CASCADE
+                )
+                """
+            )
+        )
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_ai_task_task_id ON ai_task(task_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_ai_task_file_id ON ai_task(file_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_ai_task_status_created_at ON ai_task(task_status, created_at)"))
+        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_ai_message_message_id ON ai_message(message_id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS idx_ai_message_task_id_created_at ON ai_message(task_id, created_at)"))
 
 
 def reset_database_state() -> None:

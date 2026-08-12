@@ -634,6 +634,7 @@ class FileService:
                 original_name=file_info.original_name,
                 mime_type=file_info.mime_type,
                 size_bytes=file_info.size_bytes,
+                is_hidden=file_info.is_hidden,
                 document_format=document_format,
                 content=content,
                 rendered_html=self._render_document_html(content, document_format),
@@ -651,6 +652,68 @@ class FileService:
             )
             self.db.commit()
             raise
+
+    def read_ai_document_context(
+        self,
+        *,
+        file_id: str,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> tuple[FileInfo, FilePath, str, str]:
+        """为 AI 服务读取当前可见文档内容，复用文件可见性和解密链路。"""
+
+        file_info, parent_path = self._get_visible_file_and_path(
+            file_id=file_id,
+            action_type="ai_read_document",
+            current_user=current_user,
+            client_ip=client_ip,
+        )
+        document_format = detect_document_format(file_info.file_ext, file_info.mime_type)
+        if not document_format or not is_text_file(file_info.file_ext, file_info.mime_type, file_info.file_type):
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="ai_read_document",
+                target_type="file",
+                target_id=file_id,
+                result="failed",
+                detail={"reason": "unsupported_file_type"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise UnsupportedFileTypeError("当前文件类型暂不支持 AI 处理")
+        return file_info, parent_path, document_format, self._read_text_content(file_info)
+
+    def write_ai_summary(
+        self,
+        *,
+        file_info: FileInfo,
+        summary_content: str,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileDetailResponse:
+        """把用户确认的 AI 总结写入文件摘要字段。"""
+
+        parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)
+        if parent_path is None:
+            raise NotFoundError("文件不存在")
+        self.repository.update_summary(
+            file_info,
+            summary_content=summary_content,
+            summary_source="ai",
+            user_id=current_user.user_id,
+        )
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="ai_write_summary",
+            target_type="file",
+            target_id=file_info.file_id,
+            result="success",
+            detail={"summary_length": len(summary_content)},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        self.db.refresh(file_info)
+        return self._to_detail_response(file_info, parent_path)
 
     def save_document(
         self,
@@ -706,6 +769,7 @@ class FileService:
                 original_name=file_info.original_name,
                 mime_type=file_info.mime_type,
                 size_bytes=file_info.size_bytes,
+                is_hidden=file_info.is_hidden,
                 document_format=document_format,
                 content=payload.content,
                 rendered_html=self._render_document_html(payload.content, document_format),

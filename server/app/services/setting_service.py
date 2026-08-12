@@ -75,6 +75,56 @@ class SettingService:
             return default
         return bool(self.parse_value(setting.setting_value, setting.value_type))
 
+    def get_active_ai_provider(self, provider_id: str | None = None) -> dict[str, Any] | None:
+        """读取未脱敏的启用 AI provider，仅供服务端模型调用使用。"""
+
+        providers_setting = self.repository.get_by_key("ai.providers")
+        providers = self._parse_ai_providers(
+            providers_setting.setting_value if providers_setting else None,
+            providers_setting.value_type if providers_setting else "json",
+        )
+        enabled_providers = [
+            provider
+            for provider in providers
+            if provider.get("id") and self._to_bool(provider.get("enabled", True))
+        ]
+        if provider_id:
+            requested = str(provider_id)
+            return next((provider for provider in enabled_providers if str(provider.get("id")) == requested), None)
+
+        active_setting = self.repository.get_by_key("ai.active_provider_id")
+        active_provider_id = active_setting.setting_value if active_setting else None
+        if active_provider_id:
+            active = next(
+                (provider for provider in enabled_providers if str(provider.get("id")) == str(active_provider_id)),
+                None,
+            )
+            if active is not None:
+                return active
+        return enabled_providers[0] if enabled_providers else None
+
+    def merge_ai_provider_for_verify(self, incoming: dict[str, Any]) -> dict[str, Any]:
+        """验证 provider 时，允许空 api_key 复用同 ID 的已保存密钥。"""
+
+        provider_id = str(incoming.get("id") or "").strip()
+        saved_provider = self.get_active_ai_provider(provider_id) if provider_id else None
+        api_key = incoming.get("api_key")
+        if not isinstance(api_key, str) or not api_key.strip():
+            api_key = saved_provider.get("api_key") if saved_provider else None
+        return {
+            "id": provider_id or "verify-provider",
+            "name": str(incoming.get("name") or (saved_provider or {}).get("name") or "AI 模型"),
+            "provider_type": str(
+                incoming.get("provider_type")
+                or (saved_provider or {}).get("provider_type")
+                or "openai_compatible"
+            ),
+            "base_url": str(incoming.get("base_url") or (saved_provider or {}).get("base_url") or ""),
+            "api_key": api_key if isinstance(api_key, str) and api_key.strip() else None,
+            "model_name": str(incoming.get("model_name") or (saved_provider or {}).get("model_name") or ""),
+            "enabled": True,
+        }
+
     def update_setting(
         self,
         *,

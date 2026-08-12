@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Delete, Key, Plus, Setting, Switch, UploadFilled } from '@element-plus/icons-vue'
 
+import { settingsApi } from '@/api/settings'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { AiProviderConfig, AiProviderType, SystemSettings } from '@/types/settings'
 
@@ -14,6 +15,7 @@ const hiddenVerifyConfirmPassword = ref('')
 const savingHiddenVerifyPassword = ref(false)
 const fileEncryptionKey = ref('')
 const savingFileEncryption = ref(false)
+const verifyingProviderId = ref('')
 
 const providerTypeOptions: Array<{ label: string; value: AiProviderType }> = [
   { label: 'OpenAI Compatible', value: 'openai_compatible' },
@@ -209,6 +211,34 @@ async function saveSettings() {
     }))
   })
 }
+
+async function verifyAiProvider(provider: AiProviderConfig) {
+  if (provider.provider_type !== 'openai_compatible') {
+    ElMessage.warning('当前仅支持验证 OpenAI Compatible 类型')
+    return
+  }
+  if (!provider.base_url.trim() || !provider.model_name.trim()) {
+    ElMessage.warning('请填写 API URL 和模型名称')
+    return
+  }
+  if (!provider.api_key?.trim() && !provider.api_key_configured) {
+    ElMessage.warning('请填写 API Key，或先保存已配置的密钥')
+    return
+  }
+
+  verifyingProviderId.value = provider.id
+  try {
+    const response = await settingsApi.verifyAiProvider({
+      ...provider,
+      base_url: provider.base_url.trim(),
+      api_key: provider.api_key?.trim() || null,
+      model_name: provider.model_name.trim()
+    })
+    ElMessage.success(response.message || 'AI 模型验证成功')
+  } finally {
+    verifyingProviderId.value = ''
+  }
+}
 </script>
 
 <template>
@@ -364,7 +394,7 @@ async function saveSettings() {
         <el-form label-width="180px">
           <el-form-item label="AI 功能入口">
             <el-switch v-model="form.aiFeatureEnabled" />
-            <span class="settings-view__help">当前只保存模型配置，不开放 AI 使用链路。</span>
+            <span class="settings-view__help">开启后，文档页可使用默认 OpenAI Compatible 模型处理当前文档。</span>
           </el-form-item>
           <el-form-item label="默认模型">
             <el-select
@@ -381,7 +411,7 @@ async function saveSettings() {
                 :value="option.value"
               />
             </el-select>
-            <span class="settings-view__help">后续 AI 功能会默认使用该模型配置。</span>
+            <span class="settings-view__help">DeepSeek 请按 OpenAI Compatible 类型配置。</span>
           </el-form-item>
         </el-form>
 
@@ -444,7 +474,18 @@ async function saveSettings() {
               </el-radio>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="86">
+          <el-table-column label="验证" width="94">
+            <template #default="{ row }">
+              <el-button
+                size="small"
+                :loading="verifyingProviderId === row.id"
+                @click="verifyAiProvider(row)"
+              >
+                验证
+              </el-button>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="70">
             <template #default="{ row }">
               <el-button :icon="Delete" circle @click="removeAiProvider(row.id)" />
             </template>
@@ -486,6 +527,14 @@ async function saveSettings() {
                 <el-tag size="small" :type="provider.api_key_configured ? 'success' : 'info'">
                   {{ provider.api_key_configured ? '已配置' : '未配置' }}
                 </el-tag>
+              </el-form-item>
+              <el-form-item label="可用性">
+                <el-button
+                  :loading="verifyingProviderId === provider.id"
+                  @click="verifyAiProvider(provider)"
+                >
+                  验证模型
+                </el-button>
               </el-form-item>
             </el-form>
           </article>

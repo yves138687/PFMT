@@ -121,6 +121,7 @@ export interface DocumentContent {
   mime_type?: string | null
   size_bytes: number
   encoding?: string
+  is_hidden?: boolean
   document_format: DocumentFormat
   content: string
   editable: boolean

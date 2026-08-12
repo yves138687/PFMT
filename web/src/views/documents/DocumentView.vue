@@ -32,6 +32,7 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 
 import { filesApi } from '@/api/files'
+import AiAssistantPanel from '@/components/AiAssistantPanel.vue'
 import DocumentEmbedDialog from '@/components/DocumentEmbedDialog.vue'
 import DocumentImagePreview from '@/components/DocumentImagePreview.vue'
 import DocumentOutline from '@/components/DocumentOutline.vue'
@@ -77,6 +78,7 @@ const activeOutlineId = ref('')
 const canvasRef = ref<HTMLElement | null>(null)
 const sourceRef = ref<HTMLTextAreaElement | null>(null)
 const safeRenderedHtml = ref('')
+const selectedText = ref('')
 const embedDialogVisible = ref(false)
 const embedDialogMode = ref<'image' | 'file'>('image')
 const imagePreviewVisible = ref(false)
@@ -201,6 +203,7 @@ const editor = useEditor({
   },
   onSelectionUpdate() {
     toolbarVersion.value += 1
+    updateSelectedText()
   }
 })
 
@@ -251,6 +254,50 @@ function decreaseReadFontSize() {
 
 function increaseReadFontSize() {
   readFontSize.value = Math.min(MAX_READ_FONT_SIZE, readFontSize.value + 1)
+}
+
+function updateSelectedText() {
+  if (mode.value === 'source') {
+    const textarea = sourceRef.value
+    if (!textarea || textarea.selectionStart === textarea.selectionEnd) {
+      selectedText.value = ''
+      return
+    }
+    selectedText.value = textarea.value.slice(textarea.selectionStart, textarea.selectionEnd).trim()
+    return
+  }
+
+  if (mode.value === 'edit') {
+    const editorInstance = editor.value
+    const selection = editorInstance?.state.selection
+    if (!editorInstance || !selection || selection.empty) {
+      selectedText.value = ''
+      return
+    }
+    selectedText.value = editorInstance.state.doc.textBetween(selection.from, selection.to, '\n').trim()
+    return
+  }
+
+  const selection = window.getSelection()
+  const container = canvasRef.value
+  if (!selection || selection.rangeCount === 0 || !container) {
+    selectedText.value = ''
+    return
+  }
+  const anchorNode = selection.anchorNode
+  const focusNode = selection.focusNode
+  if (
+    (anchorNode && !container.contains(anchorNode)) ||
+    (focusNode && !container.contains(focusNode))
+  ) {
+    selectedText.value = ''
+    return
+  }
+  selectedText.value = selection.toString().trim()
+}
+
+function handleSummaryWritten(_summary: string) {
+  return
 }
 
 async function setEditorContentFromSource() {
@@ -1039,13 +1086,15 @@ onBeforeUnmount(() => {
           </el-button-group>
         </div>
 
-        <div v-if="documentContent" class="document-view__workspace" :class="{ 'document-view__workspace--with-outline': showOutline }">
+        <div v-if="documentContent" class="document-view__workspace document-view__workspace--with-side">
           <div
             ref="canvasRef"
             class="document-view__canvas"
             :class="`document-view__canvas--${mode}`"
             @scroll="updateActiveOutline"
             @dblclick="openDocumentImagePreview"
+            @mouseup="updateSelectedText"
+            @keyup="updateSelectedText"
           >
             <article
               v-if="mode === 'read'"
@@ -1062,13 +1111,21 @@ onBeforeUnmount(() => {
               @input="resizeSourceTextarea"
             />
           </div>
-          <DocumentOutline
-            v-if="showOutline"
-            class="document-view__desktop-outline"
-            :items="outlineItems"
-            :active-id="activeOutlineId"
-            @navigate="scrollToOutline"
-          />
+          <div class="document-view__side-panels">
+            <AiAssistantPanel
+              :document="documentContent"
+              :selected-text="selectedText"
+              :hidden="Boolean(documentContent?.is_hidden)"
+              @summary-written="handleSummaryWritten"
+            />
+            <DocumentOutline
+              v-if="showOutline"
+              class="document-view__desktop-outline"
+              :items="outlineItems"
+              :active-id="activeOutlineId"
+              @navigate="scrollToOutline"
+            />
+          </div>
         </div>
         <el-empty v-else description="暂无文档内容" />
       </div>
@@ -1185,9 +1242,15 @@ onBeforeUnmount(() => {
   gap: 14px;
 }
 
-.document-view__workspace--with-outline {
-  grid-template-columns: minmax(0, 1fr) 220px;
+.document-view__workspace--with-side {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   align-items: start;
+}
+
+.document-view__side-panels {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
 }
 
 .document-view__canvas {
@@ -1501,8 +1564,12 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 960px) {
-  .document-view__workspace--with-outline {
+  .document-view__workspace--with-side {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .document-view__side-panels {
+    order: 2;
   }
 
   .document-view__canvas {

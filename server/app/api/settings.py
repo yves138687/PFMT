@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_client_ip, get_current_user, get_db_session
 from app.core.config import Settings, get_settings
 from app.models.user import UserAccount
-from app.schemas.setting import SettingItem, SettingUpdateRequest
+from app.schemas.setting import AiProviderVerifyRequest, AiProviderVerifyResponse, SettingItem, SettingUpdateRequest
+from app.services.ai_service import AiService
 from app.services.file_key_service import FileEncryptionStatus, FileKeyRotationService, FileKeyService
 from app.services.setting_service import SettingService
 
@@ -79,6 +80,24 @@ def disable_file_encryption_default(
     service = FileKeyService(db, settings)
     service.disable_default_encryption()
     return _file_encryption_response(service.status())
+
+
+@router.post("/ai/providers/verify", response_model=AiProviderVerifyResponse)
+def verify_ai_provider(
+    payload: AiProviderVerifyRequest,
+    _current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+) -> AiProviderVerifyResponse:
+    """验证 AI provider 可用性，不保存配置且不回显密钥。"""
+
+    provider = SettingService(db).merge_ai_provider_for_verify(payload.model_dump())
+    answer = AiService.verify_provider(provider=provider)
+    return AiProviderVerifyResponse(
+        ok=True,
+        message=f"验证成功：模型已响应（{answer[:40]}）",
+        model_name=str(provider.get("model_name") or ""),
+    )
 
 
 @router.get("", response_model=list[SettingItem])

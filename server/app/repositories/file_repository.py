@@ -196,6 +196,22 @@ class FileRepository:
         file_info.updated_by = user_id
         file_info.updated_at = now_utc()
 
+    def update_summary(
+        self,
+        file_info: FileInfo,
+        *,
+        summary_content: str | None,
+        summary_source: str | None,
+        user_id: str,
+    ) -> None:
+        """更新文件摘要来源，用于 AI 总结经用户确认后的回写。"""
+
+        file_info.summary_content = summary_content
+        file_info.summary_source = summary_source if summary_content else None
+        file_info.summary_updated_at = now_utc() if summary_content else None
+        file_info.updated_by = user_id
+        file_info.updated_at = now_utc()
+
     def update_content_metadata(
         self,
         file_info: FileInfo,

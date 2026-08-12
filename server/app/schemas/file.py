@@ -153,6 +153,7 @@ class DocumentReadResponse(BaseModel):
     mime_type: str | None
     size_bytes: int
     encoding: str = "utf-8"
+    is_hidden: bool = False
     document_format: DocumentFormat
     content: str
     editable: bool = True

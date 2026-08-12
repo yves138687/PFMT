@@ -80,6 +80,12 @@ export interface FileEncryptionStatus {
   pending_rotation_count: number
 }
 
+export interface AiProviderVerifyResponse {
+  ok: boolean
+  message: string
+  model_name?: string | null
+}
+
 /** 前端在后端配置尚未加载时使用的默认配置。 */
 export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   hiddenFeatureEnabled: true,

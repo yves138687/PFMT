@@ -28,3 +28,20 @@ class SettingUpdateRequest(BaseModel):
     group_name: str | None = Field(default=None, max_length=64)
     description: str | None = None
     is_public: bool | None = None
+
+
+class AiProviderVerifyRequest(BaseModel):
+    """验证 AI provider 可用性；api_key 为空时允许后端尝试使用已保存密钥。"""
+
+    id: str | None = Field(default=None, max_length=128)
+    name: str | None = Field(default=None, max_length=128)
+    provider_type: str = Field(default="openai_compatible", max_length=64)
+    base_url: str = Field(max_length=512)
+    api_key: str | None = Field(default=None, max_length=4096)
+    model_name: str = Field(max_length=128)
+
+
+class AiProviderVerifyResponse(BaseModel):
+    ok: bool
+    message: str
+    model_name: str | None = None

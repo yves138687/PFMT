@@ -1,5 +1,5 @@
 import { http } from './http'
-import type { AiProviderConfig, AiProviderType, FileEncryptionStatus, SystemSettingDto, SystemSettings } from '@/types/settings'
+import type { AiProviderConfig, AiProviderType, AiProviderVerifyResponse, FileEncryptionStatus, SystemSettingDto, SystemSettings } from '@/types/settings'
 import { DEFAULT_SYSTEM_SETTINGS, type SettingItem } from '@/types/settings'
 import { boolSetting } from '@/utils/format'
 
@@ -261,6 +261,16 @@ export const settingsApi = {
   },
   disableFileEncryption() {
     return http.post<FileEncryptionStatus>('/settings/file-encryption/disable')
+  },
+  verifyAiProvider(provider: AiProviderConfig) {
+    return http.post<AiProviderVerifyResponse>('/settings/ai/providers/verify', {
+      id: provider.id,
+      name: provider.name,
+      provider_type: provider.provider_type,
+      base_url: provider.base_url,
+      api_key: provider.api_key?.trim() || null,
+      model_name: provider.model_name
+    })
   },
   async updateSettings(settings: SystemSettings) {
     const responses: SystemSettingDto[] = []
