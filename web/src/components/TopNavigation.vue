@@ -6,6 +6,7 @@ import {
   Fold,
   FolderOpened,
   HomeFilled,
+  CollectionTag,
   Setting,
   SwitchButton,
   UploadFilled,
@@ -173,6 +174,9 @@ watch(
       <el-tooltip content="上传文件" placement="bottom">
         <el-button :icon="UploadFilled" circle @click="openUploadDialog" />
       </el-tooltip>
+      <el-tooltip content="标签管理" placement="bottom">
+        <el-button :icon="CollectionTag" circle @click="navigate('tags')" />
+      </el-tooltip>
       <el-tooltip content="系统配置" placement="bottom">
         <el-button :icon="Setting" circle @click="navigate('settings')" />
       </el-tooltip>
@@ -186,6 +190,7 @@ watch(
           <el-dropdown-menu>
             <el-dropdown-item :icon="HomeFilled" @click="navigate('dashboard')">首页</el-dropdown-item>
             <el-dropdown-item :icon="FolderOpened" @click="openRootFolder">文件列表</el-dropdown-item>
+            <el-dropdown-item :icon="CollectionTag" @click="navigate('tags')">标签管理</el-dropdown-item>
             <el-dropdown-item divided :icon="SwitchButton" @click="handleLogout">退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>

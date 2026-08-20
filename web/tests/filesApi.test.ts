@@ -504,4 +504,46 @@ describe('filesApi', () => {
       tag_name: 'work'
     })
   })
+
+  it('manages tags through the tags API', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse([{ tag_id: 'tag_1', tag_name: 'work', file_count: 2 }]))
+      .mockResolvedValueOnce(jsonResponse({ items: [], total: 0 }))
+      .mockResolvedValueOnce(jsonResponse({ tag_id: 'tag_1', tag_name: 'archive', tag_color: '#3366ff', file_count: 2 }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          created: [{ tag_id: 'tag_2', tag_name: 'alpha' }],
+          reused: [{ tag_id: 'tag_1', tag_name: 'archive' }],
+          invalid: [],
+          total_created: 1,
+          total_reused: 1,
+          total_invalid: 0
+        })
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await tagsApi.listTags({ withUsage: true, includeUnused: true })
+    await tagsApi.listTagFiles('tag_1')
+    await tagsApi.updateTag('tag_1', { tag_name: 'archive', tag_color: '#3366ff' })
+    await tagsApi.importTags({ raw_text: 'archive，alpha', delimiter: 'comma_cn' })
+    await tagsApi.deleteTag('tag_1')
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/tags?with_usage=true&include_unused=true')
+    expect(String(fetchMock.mock.calls[1][0])).toContain('/api/tags/tag_1/files')
+    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe('PATCH')
+    expect(JSON.parse((fetchMock.mock.calls[2][1] as RequestInit).body as string)).toEqual({
+      tag_name: 'archive',
+      tag_color: '#3366ff'
+    })
+    expect(String(fetchMock.mock.calls[3][0])).toContain('/api/tags/import')
+    expect((fetchMock.mock.calls[3][1] as RequestInit).method).toBe('POST')
+    expect(JSON.parse((fetchMock.mock.calls[3][1] as RequestInit).body as string)).toEqual({
+      raw_text: 'archive，alpha',
+      delimiter: 'comma_cn'
+    })
+    expect(String(fetchMock.mock.calls[4][0])).toContain('/api/tags/tag_1')
+    expect((fetchMock.mock.calls[4][1] as RequestInit).method).toBe('DELETE')
+  })
 })

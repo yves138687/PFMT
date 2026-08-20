@@ -580,6 +580,150 @@ def test_file_tag_suggestions_respect_hidden_visibility_and_file_type(
     assert unsupported_response.json()["error_code"] == "unsupported_file_type"
 
 
+def test_tag_management_usage_respects_hidden_visibility(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """标签列表、使用量和标签文章列表都按当前会话可见文件计算。"""
+
+    visible_file = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("visible.md", b"# Visible\n", "text/markdown")},
+    ).json()
+    hidden_file = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true", "is_hidden": "true"},
+        files={"file": ("hidden.md", b"# Hidden\n", "text/markdown")},
+    ).json()
+    hidden_path = client.post(
+        "/api/paths",
+        headers=auth_headers,
+        json={"path_name": "Hidden Tags", "parent_path_id": "root", "is_hidden": True},
+    ).json()
+    visible_tag = client.post("/api/tags", headers=auth_headers, json={"tag_name": "visible-only"}).json()
+    hidden_tag = client.post("/api/tags", headers=auth_headers, json={"tag_name": "hidden-only"}).json()
+    shared_tag = client.post("/api/tags", headers=auth_headers, json={"tag_name": "shared"}).json()
+    hidden_path_tag = client.post("/api/tags", headers=auth_headers, json={"tag_name": "hidden-path-only"}).json()
+    unused_tag = client.post("/api/tags", headers=auth_headers, json={"tag_name": "unused"}).json()
+
+    session_response = client.put("/api/auth/hidden-content", headers=auth_headers, json={"enabled": True})
+    assert session_response.status_code == 200
+    hidden_path_file = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": hidden_path["path_id"], "encryption_enabled": "true"},
+        files={"file": ("hidden-path.md", b"# Hidden path\n", "text/markdown")},
+    ).json()
+    assert client.put(
+        f"/api/files/{visible_file['file_id']}/tags",
+        headers=auth_headers,
+        json={"tag_names": ["visible-only", "shared"]},
+    ).status_code == 200
+    assert client.put(
+        f"/api/files/{hidden_file['file_id']}/tags",
+        headers=auth_headers,
+        json={"tag_names": ["hidden-only", "shared"]},
+    ).status_code == 200
+    assert client.put(
+        f"/api/files/{hidden_path_file['file_id']}/tags",
+        headers=auth_headers,
+        json={"tag_names": ["hidden-path-only"]},
+    ).status_code == 200
+    assert client.put("/api/auth/hidden-content", headers=auth_headers, json={"enabled": False}).status_code == 200
+
+    response = client.get(
+        "/api/tags",
+        headers=auth_headers,
+        params={"with_usage": "true", "include_unused": "true"},
+    )
+    assert response.status_code == 200
+    counts = {item["tag_name"]: item["file_count"] for item in response.json()}
+    assert counts == {"shared": 1, "unused": 0, "visible-only": 1}
+    assert hidden_tag["tag_name"] not in counts
+    assert hidden_path_tag["tag_name"] not in counts
+
+    shared_files = client.get(f"/api/tags/{shared_tag['tag_id']}/files", headers=auth_headers)
+    assert shared_files.status_code == 200
+    assert [item["file_id"] for item in shared_files.json()["items"]] == [visible_file["file_id"]]
+
+    assert client.put("/api/auth/hidden-content", headers=auth_headers, json={"enabled": True}).status_code == 200
+    visible_response = client.get(
+        "/api/tags",
+        headers=auth_headers,
+        params={"with_usage": "true", "include_unused": "true"},
+    )
+    visible_counts = {item["tag_name"]: item["file_count"] for item in visible_response.json()}
+    assert visible_counts["shared"] == 2
+    assert visible_counts["hidden-only"] == 1
+    assert visible_counts["hidden-path-only"] == 1
+    assert visible_counts[unused_tag["tag_name"]] == 0
+
+
+def test_tag_management_import_update_and_delete(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """批量导入支持多种分隔符，标签可更新和停用。"""
+
+    existing = client.post("/api/tags", headers=auth_headers, json={"tag_name": "alpha"}).json()
+    response = client.post(
+        "/api/tags/import",
+        headers=auth_headers,
+        json={"raw_text": "alpha， beta ，Alpha，gamma", "delimiter": "comma_cn"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_created"] == 2
+    assert body["total_reused"] == 1
+    assert {item["tag_name"] for item in body["created"]} == {"beta", "gamma"}
+    assert [item["tag_id"] for item in body["reused"]] == [existing["tag_id"]]
+
+    delimiter_payloads = [
+        ("newline", "line-a\nline-b"),
+        ("comma_en", "comma-a,comma-b"),
+        ("hash", "hash-a#hash-b"),
+        ("slash", "slash-a/slash-b"),
+        ("semicolon", "semi-a;semi-b"),
+        ("custom", "custom-a|custom-b"),
+    ]
+    for delimiter, raw_text in delimiter_payloads:
+        payload = {"raw_text": raw_text, "delimiter": delimiter}
+        if delimiter == "custom":
+            payload["custom_delimiter"] = "|"
+        import_response = client.post("/api/tags/import", headers=auth_headers, json=payload)
+        assert import_response.status_code == 200
+        assert import_response.json()["total_created"] == 2
+
+    missing_custom = client.post(
+        "/api/tags/import",
+        headers=auth_headers,
+        json={"raw_text": "a|b", "delimiter": "custom"},
+    )
+    assert missing_custom.status_code == 422
+
+    too_many = client.post(
+        "/api/tags/import",
+        headers=auth_headers,
+        json={"raw_text": ",".join(f"tag-{index}" for index in range(501)), "delimiter": "comma_en"},
+    )
+    assert too_many.status_code == 422
+
+    updated = client.patch(
+        f"/api/tags/{existing['tag_id']}",
+        headers=auth_headers,
+        json={"tag_name": "alpha-renamed", "tag_color": "#3366ff"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["tag_name"] == "alpha-renamed"
+    assert updated.json()["tag_color"] == "#3366ff"
+
+    delete_response = client.delete(f"/api/tags/{existing['tag_id']}", headers=auth_headers)
+    assert delete_response.status_code == 204
+    recreate = client.post("/api/tags", headers=auth_headers, json={"tag_name": "alpha-renamed"})
+    assert recreate.status_code == 201
+
+
 def test_image_preview_stream_decrypts_uploaded_content(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

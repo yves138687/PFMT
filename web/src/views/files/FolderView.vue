@@ -8,6 +8,7 @@ import {
   ArrowRight,
   ArrowUp,
   Close,
+  CollectionTag,
   Delete,
   DocumentAdd,
   Download,
@@ -691,6 +692,11 @@ async function openUploadDialog() {
   uploadVisible.value = true
 }
 
+function openTagManagement() {
+  filterDrawerVisible.value = false
+  void router.push({ name: 'tags' })
+}
+
 async function handleUploadCompleted() {
   await loadFiles()
 }
@@ -1296,6 +1302,9 @@ onBeforeUnmount(() => {
             >
               <el-option v-for="tagName in tagOptions" :key="tagName" :label="tagName" :value="tagName" />
             </el-select>
+            <el-tooltip content="标签管理" placement="bottom">
+              <el-button :icon="CollectionTag" circle aria-label="标签管理" @click="openTagManagement" />
+            </el-tooltip>
           </template>
           <template v-else>
             <el-button :icon="Filter" @click="filterDrawerVisible = true">筛选</el-button>
@@ -1499,6 +1508,7 @@ onBeforeUnmount(() => {
           </el-form-item>
         </el-form>
         <div class="folder-view__drawer-footer">
+          <el-button :icon="CollectionTag" @click="openTagManagement">标签管理</el-button>
           <el-button @click="clearFilters">清空筛选</el-button>
           <el-button type="primary" @click="filterDrawerVisible = false">完成</el-button>
         </div>

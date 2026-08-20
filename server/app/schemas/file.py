@@ -14,6 +14,63 @@ class FileTagItem(BaseModel):
     tag_id: str
     tag_name: str
     tag_color: str | None = None
+    file_count: int | None = None
+
+
+TagImportDelimiter = Literal["newline", "comma_cn", "comma_en", "hash", "slash", "semicolon", "custom"]
+
+
+class FileTagUpdateRequest(BaseModel):
+    """更新标签基础信息。"""
+
+    tag_name: str | None = Field(default=None, min_length=1, max_length=128)
+    tag_color: str | None = Field(default=None, max_length=32)
+
+    @field_validator("tag_name")
+    @classmethod
+    def validate_tag_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("标签名不能为空")
+        return normalized
+
+
+class FileTagImportRequest(BaseModel):
+    """批量导入标签。"""
+
+    raw_text: str = Field(min_length=1)
+    delimiter: TagImportDelimiter
+    custom_delimiter: str | None = Field(default=None, max_length=16)
+
+    @field_validator("raw_text")
+    @classmethod
+    def validate_raw_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("导入内容不能为空")
+        return value
+
+    @field_validator("custom_delimiter")
+    @classmethod
+    def validate_custom_delimiter(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("自定义分隔符不能为空")
+        return normalized
+
+
+class FileTagImportResponse(BaseModel):
+    """批量导入标签结果。"""
+
+    created: list[FileTagItem] = Field(default_factory=list)
+    reused: list[FileTagItem] = Field(default_factory=list)
+    invalid: list[str] = Field(default_factory=list)
+    total_created: int = 0
+    total_reused: int = 0
+    total_invalid: int = 0
 
 
 class FileUploadResponse(BaseModel):

@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.core.exceptions import AuthenticationError, ConflictError, NotFoundError, UnsupportedFileTypeError
+from app.core.exceptions import AppError, AuthenticationError, ConflictError, NotFoundError, UnsupportedFileTypeError
 from app.core.security import now_utc
 from app.models.file import FileInfo, FilePath, FileTag
 from app.models.user import UserAccount
@@ -39,10 +39,13 @@ from app.schemas.file import (
     FileMoveRequest,
     FilePreviewTokenResponse,
     FileSearchResponse,
+    FileTagImportRequest,
+    FileTagImportResponse,
     FileTagSuggestionItem,
     FileTagSuggestionResponse,
     FileTagCreateRequest,
     FileTagItem,
+    FileTagUpdateRequest,
     FileTagsUpdateRequest,
     FileUpdateRequest,
     FileUploadResponse,
@@ -1364,10 +1367,24 @@ class FileService:
         self.db.commit()
         return file_info, self.storage_service.iter_content_chunks(file_info)
 
-    def list_tags(self) -> list[FileTagItem]:
-        """读取全部活动标签。"""
+    def list_tags(
+        self,
+        *,
+        current_user: UserAccount,
+        with_usage: bool = False,
+        include_unused: bool = True,
+    ) -> list[FileTagItem]:
+        """读取当前会话可见的活动标签。"""
 
-        return [self._to_tag_item(tag) for tag in self.tag_repository.list_active()]
+        tags, visible_counts, _all_counts = self._visible_tags_with_counts(
+            current_user=current_user,
+            include_unused=include_unused,
+        )
+        return [
+            self._to_tag_item(tag, file_count=visible_counts.get(tag.tag_id, 0) if with_usage else None)
+            for tag in tags
+            if include_unused or visible_counts.get(tag.tag_id, 0) > 0
+        ]
 
     def create_tag(
         self,
@@ -1379,7 +1396,7 @@ class FileService:
         """创建标签；同名标签直接复用。"""
 
         tag_name = payload.tag_name.strip()
-        existing = self.tag_repository.get_active_by_name(tag_name)
+        existing = self.tag_repository.get_active_by_name_ci(tag_name)
         if existing is not None:
             return self._to_tag_item(existing)
         tag = FileTag(
@@ -1400,6 +1417,166 @@ class FileService:
         self.db.refresh(tag)
         return self._to_tag_item(tag)
 
+    def update_tag(
+        self,
+        *,
+        tag_id: str,
+        payload: FileTagUpdateRequest,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileTagItem:
+        """更新标签名和颜色。"""
+
+        tag = self.tag_repository.get_active_by_tag_id(tag_id)
+        if tag is None:
+            raise NotFoundError("标签不存在")
+        if payload.tag_name is not None:
+            existing = self.tag_repository.get_active_by_name_ci(payload.tag_name)
+            if existing is not None and existing.tag_id != tag_id:
+                raise ConflictError("标签名已存在")
+            tag.tag_name = payload.tag_name
+        if "tag_color" in payload.model_fields_set:
+            tag.tag_color = self._normalize_optional_text(payload.tag_color)
+        tag.updated_at = now_utc()
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="update_tag",
+            target_type="file_tag",
+            target_id=tag.tag_id,
+            result="success",
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        self.db.refresh(tag)
+        return self._to_tag_item(tag)
+
+    def delete_tag(
+        self,
+        *,
+        tag_id: str,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> None:
+        """停用标签并移除所有文件关联。"""
+
+        tag = self.tag_repository.get_active_by_tag_id(tag_id)
+        if tag is None:
+            raise NotFoundError("标签不存在")
+        self.tag_repository.remove_relations_by_tag_id(tag_id)
+        suffix = f"__deleted__{tag.tag_id}"
+        tag.tag_name = f"{tag.tag_name[: 128 - len(suffix)]}{suffix}"
+        tag.status = "deleted"
+        tag.updated_at = now_utc()
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="delete_tag",
+            target_type="file_tag",
+            target_id=tag.tag_id,
+            result="success",
+            client_ip=client_ip,
+        )
+        self.db.commit()
+
+    def import_tags(
+        self,
+        *,
+        payload: FileTagImportRequest,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileTagImportResponse:
+        """按指定分隔符批量导入标签，只维护标签库，不关联文件。"""
+
+        delimiter = self._tag_import_delimiter(payload)
+        raw_items = payload.raw_text.split(delimiter)
+        normalized: list[str] = []
+        seen: set[str] = set()
+        invalid: list[str] = []
+        for item in raw_items:
+            tag_name = item.strip()
+            if not tag_name:
+                continue
+            if len(tag_name) > 128:
+                invalid.append(tag_name)
+                continue
+            lowered = tag_name.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(tag_name)
+
+        if not normalized and not invalid:
+            raise AppError("导入内容不能为空", status_code=422, error_code="validation_error")
+        if invalid:
+            raise AppError("标签名不能超过 128 个字符", status_code=422, error_code="validation_error")
+        if len(normalized) > 500:
+            raise AppError("单次最多导入 500 个标签", status_code=422, error_code="validation_error")
+
+        created: list[FileTagItem] = []
+        reused: list[FileTagItem] = []
+        for tag_name in normalized:
+            existing = self.tag_repository.get_active_by_name_ci(tag_name)
+            if existing is not None:
+                reused.append(self._to_tag_item(existing))
+                continue
+            tag = FileTag(tag_id=new_business_id("tag"), tag_name=tag_name)
+            self.tag_repository.create(tag)
+            created.append(self._to_tag_item(tag))
+
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="import_tags",
+            target_type="file_tag",
+            result="success",
+            detail={"created": len(created), "reused": len(reused)},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return FileTagImportResponse(
+            created=created,
+            reused=reused,
+            invalid=[],
+            total_created=len(created),
+            total_reused=len(reused),
+            total_invalid=0,
+        )
+
+    def list_files_by_tag(
+        self,
+        *,
+        tag_id: str,
+        current_user: UserAccount,
+        client_ip: str | None,
+    ) -> FileSearchResponse:
+        """按标签读取当前会话可见文件。"""
+
+        tag = self.tag_repository.get_active_by_tag_id(tag_id)
+        if tag is None:
+            raise NotFoundError("标签不存在")
+        include_hidden = self._include_hidden_files(current_user=current_user)
+        paths = self.path_repository.list_active(include_hidden=True)
+        visible_path_ids = self._visible_path_ids(paths=paths, include_hidden=include_hidden)
+        files = self.tag_repository.list_active_files_by_tag_id(
+            tag_id=tag_id,
+            path_ids=visible_path_ids,
+            include_hidden=include_hidden,
+        )
+        items: list[FileDetailResponse] = []
+        for file_info in files:
+            parent_path = self.path_repository.get_active_by_path_id(file_info.path_id)
+            if parent_path is not None:
+                items.append(self._to_detail_response(file_info, parent_path))
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="list_files_by_tag",
+            target_type="file_tag",
+            target_id=tag_id,
+            result="success",
+            detail={"count": len(items), "show_hidden": include_hidden},
+            client_ip=client_ip,
+        )
+        self.db.commit()
+        return FileSearchResponse(items=items, total=len(items))
+
     def update_file_tags(
         self,
         *,
@@ -1418,7 +1595,7 @@ class FileService:
         )
         tags: list[FileTag] = []
         for tag_name in payload.tag_names:
-            existing = self.tag_repository.get_active_by_name(tag_name)
+            existing = self.tag_repository.get_active_by_name_ci(tag_name)
             if existing is None:
                 existing = FileTag(tag_id=new_business_id("tag"), tag_name=tag_name)
                 self.tag_repository.create(existing)
@@ -1466,7 +1643,10 @@ class FileService:
             self.db.commit()
             raise UnsupportedFileTypeError("当前文件类型暂不支持标签生成")
 
-        existing_tags = self.tag_repository.list_active()
+        existing_tags, _visible_counts, _all_counts = self._visible_tags_with_counts(
+            current_user=current_user,
+            include_unused=True,
+        )
         suggestions = TagSuggestionService().suggest(
             content_chunks=self.storage_service.iter_content_chunks(file_info),
             document_format=document_format,
@@ -2174,9 +2354,55 @@ class FileService:
             checksum_sha256=file_info.checksum_sha256,
         )
 
+    def _visible_tags_with_counts(
+        self,
+        *,
+        current_user: UserAccount,
+        include_unused: bool,
+    ) -> tuple[list[FileTag], dict[str, int], dict[str, int]]:
+        include_hidden = self._include_hidden_files(current_user=current_user)
+        tags = self.tag_repository.list_active()
+        tag_ids = [tag.tag_id for tag in tags]
+        paths = self.path_repository.list_active(include_hidden=True)
+        all_path_ids = [path.path_id for path in paths]
+        visible_path_ids = self._visible_path_ids(paths=paths, include_hidden=include_hidden)
+        visible_counts = self.tag_repository.count_active_files_by_tag_ids(
+            tag_ids=tag_ids,
+            path_ids=visible_path_ids,
+            include_hidden=include_hidden,
+        )
+        all_counts = self.tag_repository.count_active_files_by_tag_ids(
+            tag_ids=tag_ids,
+            path_ids=all_path_ids,
+            include_hidden=True,
+        )
+        visible_tags: list[FileTag] = []
+        for tag in tags:
+            visible_count = visible_counts.get(tag.tag_id, 0)
+            all_count = all_counts.get(tag.tag_id, 0)
+            if visible_count > 0 or (include_unused and all_count == 0) or include_hidden:
+                visible_tags.append(tag)
+        return visible_tags, visible_counts, all_counts
+
     @staticmethod
-    def _to_tag_item(tag: FileTag) -> FileTagItem:
-        return FileTagItem(tag_id=tag.tag_id, tag_name=tag.tag_name, tag_color=tag.tag_color)
+    def _tag_import_delimiter(payload: FileTagImportRequest) -> str:
+        delimiters = {
+            "newline": "\n",
+            "comma_cn": "，",
+            "comma_en": ",",
+            "hash": "#",
+            "slash": "/",
+            "semicolon": ";",
+        }
+        if payload.delimiter == "custom":
+            if not payload.custom_delimiter:
+                raise AppError("请选择或输入自定义分隔符", status_code=422, error_code="validation_error")
+            return payload.custom_delimiter
+        return delimiters[payload.delimiter]
+
+    @staticmethod
+    def _to_tag_item(tag: FileTag, *, file_count: int | None = None) -> FileTagItem:
+        return FileTagItem(tag_id=tag.tag_id, tag_name=tag.tag_name, tag_color=tag.tag_color, file_count=file_count)
 
     @staticmethod
     def _to_upload_response(file_info: FileInfo) -> FileUploadResponse:

@@ -76,6 +76,15 @@ export const routes: RouteRecordRaw[] = [
         }
       },
       {
+        path: 'tags',
+        name: 'tags',
+        component: () => import('@/views/tags/TagsManagementView.vue'),
+        meta: {
+          title: '标签管理',
+          requiresAuth: true
+        }
+      },
+      {
         path: 'search',
         name: 'search',
         component: () => import('@/views/search/SearchView.vue'),

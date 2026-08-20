@@ -26,6 +26,29 @@ export interface FileTag {
   tag_id: string
   tag_name: string
   tag_color?: string | null
+  file_count?: number | null
+}
+
+export type TagImportDelimiter = 'newline' | 'comma_cn' | 'comma_en' | 'hash' | 'slash' | 'semicolon' | 'custom'
+
+export interface FileTagUpdatePayload {
+  tag_name?: string | null
+  tag_color?: string | null
+}
+
+export interface FileTagImportPayload {
+  raw_text: string
+  delimiter: TagImportDelimiter
+  custom_delimiter?: string | null
+}
+
+export interface FileTagImportResponse {
+  created: FileTag[]
+  reused: FileTag[]
+  invalid: string[]
+  total_created: number
+  total_reused: number
+  total_invalid: number
 }
 
 export type FileTagSuggestionSource = 'existing_tag_match' | 'keyword_weight'

@@ -13,6 +13,9 @@ import type {
   FilePreviewToken,
   FileSearchResponse,
   FileTag,
+  FileTagImportPayload,
+  FileTagImportResponse,
+  FileTagUpdatePayload,
   FileTagSuggestionResponse,
   FileUpdatePayload,
   MarkdownFileContent,
@@ -135,14 +138,31 @@ export const filesApi = {
 }
 
 export const tagsApi = {
-  listTags() {
-    return http.get<FileTag[]>('/tags')
+  listTags(options: { withUsage?: boolean, includeUnused?: boolean } = {}) {
+    return http.get<FileTag[]>('/tags', {
+      query: {
+        with_usage: options.withUsage,
+        include_unused: options.includeUnused
+      }
+    })
   },
   createTag(tagName: string, tagColor?: string | null) {
     return http.post<FileTag>('/tags', {
       tag_name: tagName,
       tag_color: tagColor
     })
+  },
+  updateTag(tagId: string, payload: FileTagUpdatePayload) {
+    return http.patch<FileTag>(`/tags/${encodeURIComponent(tagId)}`, payload)
+  },
+  deleteTag(tagId: string) {
+    return http.delete<void>(`/tags/${encodeURIComponent(tagId)}`)
+  },
+  importTags(payload: FileTagImportPayload) {
+    return http.post<FileTagImportResponse>('/tags/import', payload)
+  },
+  listTagFiles(tagId: string) {
+    return http.get<FileSearchResponse>(`/tags/${encodeURIComponent(tagId)}/files`)
   }
 }
 

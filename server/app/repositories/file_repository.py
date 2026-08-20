@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.security import now_utc
@@ -311,6 +311,14 @@ class FileTagRepository:
         stmt = select(FileTag).where(FileTag.tag_name == tag_name, FileTag.status == "active")
         return self.db.execute(stmt).scalar_one_or_none()
 
+    def get_active_by_name_ci(self, tag_name: str) -> FileTag | None:
+        stmt = select(FileTag).where(func.lower(FileTag.tag_name) == tag_name.lower(), FileTag.status == "active")
+        return self.db.execute(stmt).scalar_one_or_none()
+
+    def get_active_by_tag_id(self, tag_id: str) -> FileTag | None:
+        stmt = select(FileTag).where(FileTag.tag_id == tag_id, FileTag.status == "active")
+        return self.db.execute(stmt).scalar_one_or_none()
+
     def get_active_by_file_id(self, file_id: str) -> list[FileTag]:
         stmt = (
             select(FileTag)
@@ -344,3 +352,52 @@ class FileTagRepository:
             self.db.delete(rel)
         for tag in tags:
             self.db.add(FileTagRel(file_id=file_id, tag_id=tag.tag_id))
+
+    def count_active_files_by_tag_ids(
+        self,
+        *,
+        tag_ids: Sequence[str],
+        path_ids: Sequence[str],
+        include_hidden: bool,
+    ) -> dict[str, int]:
+        if not tag_ids or not path_ids:
+            return {}
+        stmt = (
+            select(FileTagRel.tag_id, func.count(func.distinct(FileInfo.file_id)))
+            .join(FileInfo, FileTagRel.file_id == FileInfo.file_id)
+            .where(
+                FileTagRel.tag_id.in_(tag_ids),
+                FileInfo.path_id.in_(path_ids),
+                FileInfo.status == "active",
+            )
+            .group_by(FileTagRel.tag_id)
+        )
+        if not include_hidden:
+            stmt = stmt.where(FileInfo.is_hidden.is_(False))
+        return {tag_id: int(count) for tag_id, count in self.db.execute(stmt).all()}
+
+    def list_active_files_by_tag_id(
+        self,
+        *,
+        tag_id: str,
+        path_ids: Sequence[str],
+        include_hidden: bool,
+    ) -> list[FileInfo]:
+        if not path_ids:
+            return []
+        stmt = (
+            select(FileInfo)
+            .join(FileTagRel, FileInfo.file_id == FileTagRel.file_id)
+            .where(
+                FileTagRel.tag_id == tag_id,
+                FileInfo.path_id.in_(path_ids),
+                FileInfo.status == "active",
+            )
+            .order_by(FileInfo.updated_at.desc(), FileInfo.id.desc())
+        )
+        if not include_hidden:
+            stmt = stmt.where(FileInfo.is_hidden.is_(False))
+        return list(self.db.execute(stmt).scalars().all())
+
+    def remove_relations_by_tag_id(self, tag_id: str) -> None:
+        self.db.execute(delete(FileTagRel).where(FileTagRel.tag_id == tag_id))
