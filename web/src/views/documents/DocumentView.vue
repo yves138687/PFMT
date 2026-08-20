@@ -58,6 +58,8 @@ type DocumentMode = 'read' | 'edit' | 'source'
 const DEFAULT_READ_FONT_SIZE = 15
 const MIN_READ_FONT_SIZE = 12
 const MAX_READ_FONT_SIZE = 24
+const LARGE_DOCUMENT_SIZE_BYTES = 512 * 1024
+const RICH_EDITOR_CONFIRM_SIZE_BYTES = 2 * 1024 * 1024
 
 const route = useRoute()
 const router = useRouter()
@@ -70,6 +72,7 @@ const loading = ref(false)
 const saving = ref(false)
 const converting = ref(false)
 const exporting = ref(false)
+const editorLoading = ref(false)
 const convertVisible = ref(false)
 const outlineDrawerVisible = ref(false)
 const editorVersion = ref(0)
@@ -90,6 +93,8 @@ const convertForm = ref<{ target_format: DocumentFormat; target_name: string }>(
   target_format: 'html',
   target_name: ''
 })
+let editorContentRequestId = 0
+let renderedEmbedObserver: IntersectionObserver | null = null
 
 const fileId = computed(() => (typeof route.params.fileId === 'string' ? route.params.fileId : ''))
 const fromPathId = computed(() => {
@@ -128,6 +133,17 @@ const outlineItems = computed(() => {
   return buildHtmlOutline(safeRenderedHtml.value)
 })
 const showOutline = computed(() => documentContent.value?.document_format !== 'plain_text')
+const isLargeDocument = computed(() => (documentContent.value?.size_bytes ?? 0) >= LARGE_DOCUMENT_SIZE_BYTES)
+const requiresRichEditorConfirm = computed(() => (documentContent.value?.size_bytes ?? 0) >= RICH_EDITOR_CONFIRM_SIZE_BYTES)
+const largeDocumentHint = computed(() => {
+  if (!isLargeDocument.value) {
+    return ''
+  }
+  if (requiresRichEditorConfirm.value) {
+    return '当前文档较大，已默认使用快速阅读；源码模式适合快速修改，富文本编辑需要额外准备时间。'
+  }
+  return '当前文档较大，已默认使用快速阅读；进入编辑时会按需准备富文本编辑器。'
+})
 
 const toolbarActive = computed(() => {
   toolbarVersion.value
@@ -216,18 +232,36 @@ function backToFolder() {
   })
 }
 
-function setMode(nextMode: DocumentMode) {
+async function setMode(nextMode: DocumentMode) {
+  const previousMode = mode.value
+  if (nextMode === 'edit' && previousMode !== 'edit' && requiresRichEditorConfirm.value) {
+    try {
+      await ElMessageBox.confirm(
+        '当前文档超过 2MB，富文本编辑器准备时间可能较长。建议使用源码模式进行快速修改，是否继续进入富文本编辑？',
+        '大文档编辑',
+        {
+          type: 'warning',
+          confirmButtonText: '继续编辑',
+          cancelButtonText: '留在当前模式'
+        }
+      )
+    } catch {
+      return
+    }
+  }
   if (mode.value === 'edit' && nextMode === 'source') {
     sourceContent.value = currentSaveContent()
   }
   mode.value = nextMode
   if (nextMode === 'edit') {
-    void setEditorContentFromSource()
+    disconnectRenderedEmbedObserver()
+    await prepareEditorContent()
   }
   if (nextMode === 'read') {
-    void refreshRenderedHtml()
+    await refreshRenderedHtml()
   }
   if (nextMode === 'source') {
+    disconnectRenderedEmbedObserver()
     void nextTick(resizeSourceTextarea)
   }
   activeOutlineId.value = outlineItems.value[0]?.id ?? ''
@@ -244,7 +278,7 @@ function escapeHtml(value: string) {
 
 function handleModeChange(value: string | number | boolean | undefined) {
   if (value === 'read' || value === 'edit' || value === 'source') {
-    setMode(value)
+    void setMode(value)
   }
 }
 
@@ -305,18 +339,27 @@ async function setEditorContentFromSource() {
   if (!currentDocument) {
     return
   }
+  const sourceSnapshot = sourceContent.value
+  const requestId = ++editorContentRequestId
   let html = ''
   if (currentDocument.document_format === 'markdown') {
-    html = renderMarkdown(sourceContent.value)
+    html = renderMarkdown(sourceSnapshot)
   } else if (currentDocument.document_format === 'html') {
-    html = sourceContent.value
+    html = sourceSnapshot
   } else {
-    html = sourceContent.value
+    html = sourceSnapshot
       .split(/\r?\n/)
       .map((line) => `<p>${escapeHtml(line) || '<br>'}</p>`)
       .join('')
   }
   const resolved = await resolveEmbedUrls(html)
+  if (
+    requestId !== editorContentRequestId ||
+    documentContent.value?.file_id !== currentDocument.file_id ||
+    sourceContent.value !== sourceSnapshot
+  ) {
+    return
+  }
   editor.value?.commands.setContent(resolved)
   editorVersion.value += 1
   await nextTick()
@@ -324,23 +367,52 @@ async function setEditorContentFromSource() {
   resizeSourceTextarea()
 }
 
+async function prepareEditorContent() {
+  editorLoading.value = true
+  try {
+    await setEditorContentFromSource()
+  } finally {
+    editorLoading.value = false
+  }
+}
+
+function renderPlainTextHtml(content: string) {
+  const paragraphs = escapeHtml(content).split(/\r?\n/) || ['']
+  return paragraphs.map((line) => `<p>${line || '<br>'}</p>`).join('\n')
+}
+
+async function renderReadableHtml(html: string) {
+  safeRenderedHtml.value = addOutlineIdsToHtml(stripEmbedTokens(html))
+  await nextTick()
+  observeRenderedEmbeds()
+}
+
 async function refreshRenderedHtml() {
   const currentDocument = documentContent.value
   if (!currentDocument) {
     safeRenderedHtml.value = ''
+    disconnectRenderedEmbedObserver()
     return
   }
+  const content = sourceContent.value
   if (currentDocument.document_format === 'markdown') {
-    const rendered = renderMarkdown(currentDocument.content)
-    safeRenderedHtml.value = addOutlineIdsToHtml(await resolveEmbedUrls(rendered))
+    const rendered = content === currentDocument.content && currentDocument.rendered_html
+      ? currentDocument.rendered_html
+      : renderMarkdown(content)
+    await renderReadableHtml(rendered)
     return
   }
   if (currentDocument.document_format === 'html') {
-    const rendered = DOMPurify.sanitize(currentDocument.rendered_html ?? currentDocument.content)
-    safeRenderedHtml.value = addOutlineIdsToHtml(await resolveEmbedUrls(rendered))
+    const rendered = content === currentDocument.content && currentDocument.rendered_html
+      ? currentDocument.rendered_html
+      : content
+    await renderReadableHtml(DOMPurify.sanitize(rendered))
     return
   }
-  safeRenderedHtml.value = addOutlineIdsToHtml(DOMPurify.sanitize(currentDocument.rendered_html ?? ''))
+  const rendered = content === currentDocument.content && currentDocument.rendered_html
+    ? currentDocument.rendered_html
+    : renderPlainTextHtml(content)
+  await renderReadableHtml(DOMPurify.sanitize(rendered))
 }
 
 async function loadDocument() {
@@ -348,18 +420,32 @@ async function loadDocument() {
     documentContent.value = null
     sourceContent.value = ''
     safeRenderedHtml.value = ''
+    editorContentRequestId += 1
+    disconnectRenderedEmbedObserver()
     return
   }
 
   loading.value = true
   try {
+    const requestedFileId = fileId.value
+    const nextMode = documentContent.value?.file_id === requestedFileId ? mode.value : 'read'
     const response = await filesApi.getDocument(fileId.value)
+    if (fileId.value !== requestedFileId) {
+      return
+    }
     documentContent.value = response
     sourceContent.value = response.content
     activeOutlineId.value = ''
-    await setEditorContentFromSource()
-    await refreshRenderedHtml()
-    resizeSourceTextarea()
+    mode.value = nextMode
+    editorContentRequestId += 1
+    if (nextMode === 'edit') {
+      await prepareEditorContent()
+    } else if (nextMode === 'read') {
+      await refreshRenderedHtml()
+    } else {
+      await nextTick()
+      resizeSourceTextarea()
+    }
     activeOutlineId.value = outlineItems.value[0]?.id ?? ''
   } finally {
     loading.value = false
@@ -405,9 +491,17 @@ async function saveDocument() {
     )
     documentContent.value = response
     sourceContent.value = response.content
-    await setEditorContentFromSource()
-    await refreshRenderedHtml()
-    resizeSourceTextarea()
+    if (mode.value === 'edit') {
+      editorVersion.value += 1
+      toolbarVersion.value += 1
+      await nextTick()
+      applyEditorOutlineIds()
+    } else if (mode.value === 'read') {
+      await refreshRenderedHtml()
+    } else {
+      await nextTick()
+      resizeSourceTextarea()
+    }
     activeOutlineId.value = outlineItems.value[0]?.id ?? ''
     ElMessage.success('文档已保存')
   } finally {
@@ -564,16 +658,15 @@ function scrollElementIntoCanvas(container: HTMLElement, target: HTMLElement) {
 }
 
 function scrollSourceToOutline(id: string) {
-  const container = canvasRef.value
   const textarea = sourceRef.value
   const item = outlineItems.value.find((outlineItem) => outlineItem.id === id)
-  if (!container || !textarea || item?.sourceLine === undefined) {
+  if (!textarea || item?.sourceLine === undefined) {
     return
   }
 
   const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 24
   activeOutlineId.value = id
-  container.scrollTo({
+  textarea.scrollTo({
     top: item.sourceLine * lineHeight,
     behavior: 'smooth'
   })
@@ -588,7 +681,8 @@ function updateActiveSourceOutline(container: HTMLElement) {
   }
 
   const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 24
-  const currentLine = Math.max(0, Math.floor((container.scrollTop + 20) / lineHeight))
+  const scrollTop = textarea.scrollHeight > textarea.clientHeight + 1 ? textarea.scrollTop : container.scrollTop
+  const currentLine = Math.max(0, Math.floor((scrollTop + 20) / lineHeight))
   const current = outlineItems.value
     .filter((item) => item.sourceLine !== undefined && item.sourceLine <= currentLine)
     .at(-1)
@@ -614,8 +708,7 @@ function resizeSourceTextarea() {
     return
   }
 
-  textarea.style.height = 'auto'
-  textarea.style.height = `${Math.max(textarea.scrollHeight, 420)}px`
+  textarea.style.height = ''
 }
 
 function openConvertDialog() {
@@ -867,6 +960,76 @@ function revokeImagePreviewUrl() {
   }
 }
 
+function disconnectRenderedEmbedObserver() {
+  renderedEmbedObserver?.disconnect()
+  renderedEmbedObserver = null
+}
+
+function observeRenderedEmbeds() {
+  disconnectRenderedEmbedObserver()
+  if (mode.value !== 'read') {
+    return
+  }
+
+  const container = canvasRef.value
+  if (!container) {
+    return
+  }
+
+  const elements = Array.from(
+    container.querySelectorAll<HTMLImageElement | HTMLAnchorElement>(
+      'img[src*="/api/files/"][src*="/stream"], a[href*="/api/files/"][href*="/stream"]'
+    )
+  )
+  if (elements.length === 0) {
+    return
+  }
+
+  if (typeof IntersectionObserver === 'undefined') {
+    elements.forEach((element) => {
+      void resolveRenderedEmbed(element)
+    })
+    return
+  }
+
+  renderedEmbedObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) {
+          continue
+        }
+        const element = entry.target as HTMLImageElement | HTMLAnchorElement
+        renderedEmbedObserver?.unobserve(element)
+        void resolveRenderedEmbed(element)
+      }
+    },
+    {
+      root: container,
+      rootMargin: '520px 0px'
+    }
+  )
+  elements.forEach((element) => renderedEmbedObserver?.observe(element))
+}
+
+async function resolveRenderedEmbed(element: HTMLImageElement | HTMLAnchorElement) {
+  const attribute = element instanceof HTMLImageElement ? 'src' : 'href'
+  const originalUrl = element.getAttribute(attribute)
+  const fileId = extractDocumentImageFileId(originalUrl)
+  if (!originalUrl || !fileId || element.dataset.embedResolving === 'true') {
+    return
+  }
+
+  element.dataset.embedResolving = 'true'
+  try {
+    const tokenUrl = await getEmbedToken(fileId)
+    if (tokenUrl && element.getAttribute(attribute) === originalUrl) {
+      element.setAttribute(attribute, tokenUrl)
+    }
+  } finally {
+    delete element.dataset.embedResolving
+  }
+}
+
 watch(
   [fileId, () => settingsStore.showHiddenContent],
   () => {
@@ -890,6 +1053,7 @@ watch(sourceContent, () => {
 })
 
 onBeforeUnmount(() => {
+  disconnectRenderedEmbedObserver()
   editor.value?.destroy()
   revokeImagePreviewUrl()
 })
@@ -936,6 +1100,14 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-loading="loading" class="panel-body document-view__body">
+        <el-alert
+          v-if="largeDocumentHint"
+          class="document-view__large-hint"
+          type="info"
+          show-icon
+          :closable="false"
+          :title="largeDocumentHint"
+        />
         <div v-if="showToolbar" class="document-view__toolbar">
           <el-select v-model="headingLevel" size="small" class="document-view__toolbar-heading" placeholder="标题">
             <el-option label="正文" :value="0" />
@@ -1089,6 +1261,8 @@ onBeforeUnmount(() => {
         <div v-if="documentContent" class="document-view__workspace document-view__workspace--with-side">
           <div
             ref="canvasRef"
+            v-loading="editorLoading"
+            element-loading-text="正在准备编辑器"
             class="document-view__canvas"
             :class="`document-view__canvas--${mode}`"
             @scroll="updateActiveOutline"
@@ -1109,6 +1283,7 @@ onBeforeUnmount(() => {
               v-model="sourceContent"
               class="document-view__source"
               @input="resizeSourceTextarea"
+              @scroll="updateActiveOutline"
             />
           </div>
           <div class="document-view__side-panels">
@@ -1197,6 +1372,10 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-height: 68vh;
+}
+
+.document-view__large-hint {
+  margin-bottom: 12px;
 }
 
 .document-view__toolbar {
@@ -1480,9 +1659,10 @@ onBeforeUnmount(() => {
 
 .document-view__source {
   width: 100%;
+  height: calc(62vh - 36px);
   min-height: calc(62vh - 36px);
   padding: 22px 24px;
-  overflow: hidden;
+  overflow: auto;
   resize: none;
   border: 0;
   outline: none;
@@ -1543,6 +1723,7 @@ onBeforeUnmount(() => {
   }
 
   .document-view__source {
+    height: calc(56vh - 32px);
     min-height: calc(56vh - 32px);
     padding: 16px;
   }

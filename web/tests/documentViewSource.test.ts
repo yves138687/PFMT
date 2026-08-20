@@ -30,6 +30,38 @@ describe('DocumentView source contract', () => {
     expect(source).toContain("name: 'document'")
   })
 
+  it('loads documents through a fast read path before preparing the rich editor', () => {
+    expect(source).toContain('const LARGE_DOCUMENT_SIZE_BYTES = 512 * 1024')
+    expect(source).toContain('const RICH_EDITOR_CONFIRM_SIZE_BYTES = 2 * 1024 * 1024')
+    expect(source).toContain("const nextMode = documentContent.value?.file_id === requestedFileId ? mode.value : 'read'")
+    expect(source).toContain('async function prepareEditorContent()')
+    expect(source).toContain('const editorLoading = ref(false)')
+    expect(source).toContain('await prepareEditorContent()')
+    expect(source).toContain('element-loading-text="正在准备编辑器"')
+    expect(source).toContain('currentDocument.rendered_html')
+    expect(source).toContain('async function renderReadableHtml(html: string)')
+    expect(source).toContain('observeRenderedEmbeds()')
+    expect(source).not.toContain('await setEditorContentFromSource()\n    await refreshRenderedHtml()')
+  })
+
+  it('warns before preparing rich editing for very large documents', () => {
+    expect(source).toContain('const isLargeDocument = computed')
+    expect(source).toContain('const requiresRichEditorConfirm = computed')
+    expect(source).toContain('const largeDocumentHint = computed')
+    expect(source).toContain("v-if=\"largeDocumentHint\"")
+    expect(source).toContain('大文档编辑')
+    expect(source).toContain('继续编辑')
+  })
+
+  it('resolves read-mode embedded files lazily near the viewport', () => {
+    expect(source).toContain('let renderedEmbedObserver: IntersectionObserver | null = null')
+    expect(source).toContain('function observeRenderedEmbeds()')
+    expect(source).toContain("rootMargin: '520px 0px'")
+    expect(source).toContain('async function resolveRenderedEmbed')
+    expect(source).toContain('getEmbedToken(fileId)')
+    expect(source).toContain('disconnectRenderedEmbedObserver()')
+  })
+
   it('serializes rich editor content back to markdown instead of plain text', () => {
     expect(source).toContain('serializeMarkdownDocument')
     expect(source).toContain('@/utils/documentMarkdown')
@@ -43,7 +75,9 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('.document-view__source')
     expect(source).toContain('min-height: 62vh')
     expect(source).toContain('font-family: ui-monospace')
+    expect(source).toContain('overflow: auto')
     expect(source).toContain('resize: none')
+    expect(source).toContain('@scroll="updateActiveOutline"')
   })
 
   it('supports rich text toolbar with images attachments and tables', () => {

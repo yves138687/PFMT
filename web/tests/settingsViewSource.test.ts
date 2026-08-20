@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest'
 const source = readFileSync(
   resolve(process.cwd(), 'src/views/settings/SettingsView.vue'),
   'utf-8'
-)
+).replace(/\r\n/g, '\n')
 
 describe('SettingsView source contract', () => {
   it('offers an upload option for automatic txt to markdown conversion', () => {
