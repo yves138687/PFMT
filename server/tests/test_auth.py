@@ -34,6 +34,55 @@ def test_wrong_password_is_rejected_and_audited(client: TestClient) -> None:
         assert db.execute(stmt).scalar_one_or_none() is not None
 
 
+def test_change_password_revokes_all_sessions_and_requires_new_password(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """改密成功后旧密码与全部旧会话失效，只能用新密码登录。"""
+
+    second_login = client.post(
+        "/api/auth/login", json={"username": "admin", "password": "admin123456"}
+    )
+    assert second_login.status_code == 200
+    second_headers = {"Authorization": f"Bearer {second_login.json()['access_token']}"}
+
+    response = client.put(
+        "/api/auth/password",
+        headers=auth_headers,
+        json={
+            "current_password": "admin123456",
+            "new_password": "new-admin-password",
+            "confirm_password": "new-admin-password",
+        },
+    )
+    assert response.status_code == 204
+    assert client.get("/api/auth/me", headers=auth_headers).status_code == 401
+    assert client.get("/api/auth/me", headers=second_headers).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"username": "admin", "password": "admin123456"}
+    ).status_code == 401
+    assert client.post(
+        "/api/auth/login", json={"username": "admin", "password": "new-admin-password"}
+    ).status_code == 200
+
+
+def test_change_password_rejects_wrong_current_password_without_revoking_session(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """当前密码错误时不修改密码，也不影响现有登录态。"""
+
+    response = client.put(
+        "/api/auth/password",
+        headers=auth_headers,
+        json={
+            "current_password": "wrong-password",
+            "new_password": "new-admin-password",
+            "confirm_password": "new-admin-password",
+        },
+    )
+    assert response.status_code == 403
+    assert client.get("/api/auth/me", headers=auth_headers).status_code == 200
+
+
 def test_login_rate_limit_locks_repeated_failures(client: TestClient) -> None:
     """同一用户名和来源连续失败后会被临时限速。"""
 

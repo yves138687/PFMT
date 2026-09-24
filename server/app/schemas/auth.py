@@ -20,6 +20,14 @@ class UserProfile(BaseModel):
     last_login_at: datetime | None = None
 
 
+class ChangePasswordRequest(BaseModel):
+    """修改当前登录用户的密码。"""
+
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=12, max_length=256)
+    confirm_password: str = Field(min_length=12, max_length=256)
+
+
 class HiddenContentSessionRequest(BaseModel):
     """当前登录会话的隐藏内容显示开关；开启时若已配置二次验证码需携带 password。"""
 

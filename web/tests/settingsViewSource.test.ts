@@ -34,4 +34,13 @@ describe('SettingsView source contract', () => {
     expect(source).toContain('margin-left: 0 !important')
     expect(source).toContain('.settings-view__provider-table {\n    display: none;')
   })
+
+  it('provides a login password change flow that returns to login', () => {
+    expect(source).toContain('账户安全')
+    expect(source).toContain('currentLoginPassword')
+    expect(source).toContain('newLoginPassword')
+    expect(source).toContain("authApi.changePassword")
+    expect(source).toContain('authStore.clearAuth()')
+    expect(source).toContain("router.replace({ name: 'login' })")
+  })
 })

@@ -4,11 +4,20 @@ import { ElMessage } from 'element-plus'
 import { Delete, Key, Plus, Setting, Switch, UploadFilled } from '@element-plus/icons-vue'
 
 import { settingsApi } from '@/api/settings'
+import { authApi } from '@/api/auth'
+import { useAuthStore } from '@/stores/authStore'
 import { useSettingsStore } from '@/stores/settingsStore'
 import type { AiProviderConfig, AiProviderType, SystemSettings } from '@/types/settings'
+import { useRouter } from 'vue-router'
 
 const settingsStore = useSettingsStore()
+const authStore = useAuthStore()
+const router = useRouter()
 
+const currentLoginPassword = ref('')
+const newLoginPassword = ref('')
+const confirmLoginPassword = ref('')
+const savingLoginPassword = ref(false)
 const hiddenVerifyCurrentPassword = ref('')
 const hiddenVerifyNewPassword = ref('')
 const hiddenVerifyConfirmPassword = ref('')
@@ -96,6 +105,35 @@ function handleProviderEnabledChange(provider: AiProviderConfig) {
 
 async function reloadSettings() {
   await settingsStore.loadSettings()
+}
+
+async function saveLoginPassword() {
+  if (!currentLoginPassword.value || !newLoginPassword.value || !confirmLoginPassword.value) {
+    ElMessage.warning('请完整填写当前密码、新密码和确认密码')
+    return
+  }
+  if (newLoginPassword.value.length < 12) {
+    ElMessage.warning('新密码至少需要 12 位')
+    return
+  }
+  if (newLoginPassword.value !== confirmLoginPassword.value) {
+    ElMessage.warning('两次输入的新密码不一致')
+    return
+  }
+
+  savingLoginPassword.value = true
+  try {
+    await authApi.changePassword({
+      current_password: currentLoginPassword.value,
+      new_password: newLoginPassword.value,
+      confirm_password: confirmLoginPassword.value
+    })
+    authStore.clearAuth()
+    ElMessage.success('密码已修改，请使用新密码重新登录')
+    await router.replace({ name: 'login' })
+  } finally {
+    savingLoginPassword.value = false
+  }
 }
 
 function generateFileEncryptionKey() {
@@ -253,6 +291,29 @@ async function verifyAiProvider(provider: AiProviderConfig) {
         <el-button type="primary" :loading="settingsStore.saving" @click="saveSettings">保存配置</el-button>
       </div>
     </div>
+
+    <section class="work-panel settings-view__section">
+      <div class="panel-header">
+        <h2><el-icon><Key /></el-icon> 账户安全</h2>
+      </div>
+      <div class="panel-body">
+        <el-form label-width="180px">
+          <el-form-item label="当前登录密码">
+            <el-input v-model="currentLoginPassword" type="password" show-password autocomplete="current-password" />
+          </el-form-item>
+          <el-form-item label="新登录密码">
+            <el-input v-model="newLoginPassword" type="password" show-password autocomplete="new-password" placeholder="至少 12 位" />
+          </el-form-item>
+          <el-form-item label="确认新登录密码">
+            <el-input v-model="confirmLoginPassword" type="password" show-password autocomplete="new-password" />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="savingLoginPassword" @click="saveLoginPassword">修改密码</el-button>
+            <span class="settings-view__help">修改成功后，所有已登录设备都需要使用新密码重新登录。</span>
+          </el-form-item>
+        </el-form>
+      </div>
+    </section>
 
     <section class="work-panel settings-view__section">
       <div class="panel-header">

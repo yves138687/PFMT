@@ -8,6 +8,7 @@ from app.core.exceptions import AppError, AuthenticationError, PermissionDeniedE
 from app.core.security import (
     create_access_token,
     decode_access_token,
+    hash_password,
     hash_token,
     now_utc,
     verify_password,
@@ -218,6 +219,46 @@ class AuthService:
         )
         self._clear_hidden_verify_attempts(rate_limit_key)
         return configured
+
+    def change_password(
+        self,
+        *,
+        current_user: UserAccount,
+        current_password: str,
+        new_password: str,
+        confirm_password: str,
+        client_ip: str | None,
+    ) -> None:
+        """修改登录密码并撤销该用户在所有设备上的登录会话。"""
+
+        if new_password != confirm_password:
+            raise AppError("两次输入的新密码不一致")
+        if not verify_password(current_password, current_user.password_hash):
+            self.audit_service.record(
+                user_id=current_user.user_id,
+                action_type="change_password",
+                target_type="user",
+                target_id=current_user.user_id,
+                result="failed",
+                detail={"reason": "invalid_current_password"},
+                client_ip=client_ip,
+            )
+            self.db.commit()
+            raise PermissionDeniedError("当前密码错误")
+        if current_password == new_password:
+            raise AppError("新密码不能与当前密码相同")
+
+        current_user.password_hash = hash_password(new_password)
+        self.session_repository.delete_by_user_id(current_user.user_id)
+        self.audit_service.record(
+            user_id=current_user.user_id,
+            action_type="change_password",
+            target_type="user",
+            target_id=current_user.user_id,
+            result="success",
+            client_ip=client_ip,
+        )
+        self.db.commit()
 
     def logout(self, *, token: str, current_user: UserAccount, client_ip: str | None) -> None:
         """退出登录，删除当前会话记录。"""

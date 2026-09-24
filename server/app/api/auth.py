@@ -5,6 +5,7 @@ from app.api.dependencies import get_bearer_token, get_client_ip, get_current_us
 from app.core.config import Settings, get_settings
 from app.models.user import UserAccount
 from app.schemas.auth import (
+    ChangePasswordRequest,
     HiddenContentPasswordRequest,
     HiddenContentPasswordResponse,
     HiddenContentSessionRequest,
@@ -43,6 +44,25 @@ def me(current_user: UserAccount = Depends(get_current_user)) -> UserProfile:
     """读取当前登录用户信息。"""
 
     return AuthService._to_profile(current_user)
+
+
+@router.put("/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    payload: ChangePasswordRequest,
+    current_user: UserAccount = Depends(get_current_user),
+    db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+    client_ip: str | None = Depends(get_client_ip),
+) -> None:
+    """修改登录密码；成功后撤销该用户在所有设备上的会话。"""
+
+    AuthService(db, settings).change_password(
+        current_user=current_user,
+        current_password=payload.current_password,
+        new_password=payload.new_password,
+        confirm_password=payload.confirm_password,
+        client_ip=client_ip,
+    )
 
 
 @router.get("/hidden-content", response_model=HiddenContentSessionResponse)

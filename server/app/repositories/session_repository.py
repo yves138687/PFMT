@@ -43,3 +43,8 @@ class SessionRepository:
         """退出登录时删除会话记录。"""
 
         self.db.execute(delete(UserSession).where(UserSession.session_id == session_id))
+
+    def delete_by_user_id(self, user_id: str) -> None:
+        """删除用户全部会话，用于改密后强制所有设备重新登录。"""
+
+        self.db.execute(delete(UserSession).where(UserSession.user_id == user_id))

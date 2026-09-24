@@ -1,5 +1,6 @@
 import { http } from './http'
 import type {
+  ChangePasswordRequest,
   HiddenContentPasswordRequest,
   HiddenContentPasswordResponse,
   HiddenContentSessionResponse,
@@ -17,6 +18,9 @@ export const authApi = {
   },
   getCurrentUser() {
     return http.get<UserProfile>('/auth/me')
+  },
+  changePassword(payload: ChangePasswordRequest) {
+    return http.put<void>('/auth/password', payload)
   },
   getHiddenContentSession() {
     return http.get<HiddenContentSessionResponse>('/auth/hidden-content')
