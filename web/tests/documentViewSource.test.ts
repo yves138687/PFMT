@@ -172,4 +172,12 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('class="document-view__chapter-footer-select"')
     expect(source).toContain('class="document-view__chapter-footer-status"')
   })
+
+  it('returns to the new chapter start after asynchronous navigation', () => {
+    expect(source).toContain('const sectionLoading = ref(false)')
+    expect(source).toContain('let documentLoadRequestId = 0')
+    expect(source).toContain('requestId !== documentLoadRequestId')
+    expect(source).toContain("readingStart?.scrollIntoView({ block: 'start', behavior: 'auto' })")
+    expect(source).toContain('scroll-margin-top: calc(var(--pfmt-topbar-height) + 16px);')
+  })
 })

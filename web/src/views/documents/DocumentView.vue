@@ -73,6 +73,7 @@ const sourceContent = ref('')
 const mode = ref<DocumentMode>('read')
 const readFontSize = ref(DEFAULT_READ_FONT_SIZE)
 const readSectionIndex = ref(0)
+const sectionLoading = ref(false)
 const aiPanelOpen = ref(false)
 const loading = ref(false)
 const saving = ref(false)
@@ -100,6 +101,7 @@ const convertForm = ref<{ target_format: DocumentFormat; target_name: string }>(
   target_name: ''
 })
 let editorContentRequestId = 0
+let documentLoadRequestId = 0
 let renderedEmbedObserver: IntersectionObserver | null = null
 
 const fileId = computed(() => (typeof route.params.fileId === 'string' ? route.params.fileId : ''))
@@ -479,15 +481,17 @@ async function loadDocument(readSection?: number) {
     return
   }
 
+  let requestId = 0
   loading.value = true
   try {
     const requestedFileId = fileId.value
+    requestId = ++documentLoadRequestId
     const nextMode = documentContent.value?.file_id === requestedFileId ? mode.value : 'read'
     const response = await filesApi.getDocument(
       fileId.value,
       nextMode === 'read' ? { readSection: readSection ?? 0 } : {}
     )
-    if (fileId.value !== requestedFileId) {
+    if (fileId.value !== requestedFileId || requestId !== documentLoadRequestId) {
       return
     }
     documentContent.value = response
@@ -506,7 +510,9 @@ async function loadDocument(readSection?: number) {
     }
     activeOutlineId.value = outlineItems.value[0]?.id ?? ''
   } finally {
-    loading.value = false
+    if (requestId === documentLoadRequestId) {
+      loading.value = false
+    }
   }
 }
 
@@ -634,11 +640,18 @@ function applyEditorOutlineIds() {
 
 async function selectReadSection(index: number) {
   const nextIndex = Math.min(Math.max(index, 0), Math.max(readSections.value.length - 1, 0))
-  if (nextIndex === readSectionIndex.value) {
+  if (nextIndex === readSectionIndex.value || sectionLoading.value) {
     return
   }
-  await loadDocument(nextIndex)
-  canvasRef.value?.scrollTo({ top: 0 })
+  sectionLoading.value = true
+  try {
+    await loadDocument(nextIndex)
+    await nextTick()
+    const readingStart = canvasRef.value?.querySelector<HTMLElement>('.document-view__reading-content')
+    readingStart?.scrollIntoView({ block: 'start', behavior: 'auto' })
+  } finally {
+    sectionLoading.value = false
+  }
 }
 
 async function scrollToOutline(id: string, index = -1) {
@@ -1202,12 +1215,13 @@ onBeforeUnmount(() => {
           </el-button>
           </div>
           <div v-if="readSections.length > 1" class="document-view__read-section-controls">
-          <el-button size="small" :disabled="readSectionIndex === 0" @click="selectReadSection(readSectionIndex - 1)">上一节</el-button>
+          <el-button size="small" :loading="sectionLoading" :disabled="readSectionIndex === 0 || sectionLoading" @click="selectReadSection(readSectionIndex - 1)">上一节</el-button>
           <el-select
             :model-value="readSectionIndex"
             size="small"
             class="document-view__read-section-select"
             aria-label="阅读章节"
+            :disabled="sectionLoading"
             @update:model-value="selectReadSection(Number($event))"
           >
             <el-option
@@ -1218,7 +1232,7 @@ onBeforeUnmount(() => {
             />
           </el-select>
           <span class="document-view__read-section-label">{{ readSectionLabel }}</span>
-          <el-button size="small" :disabled="readSectionIndex >= readSections.length - 1" @click="selectReadSection(readSectionIndex + 1)">下一节</el-button>
+          <el-button size="small" :loading="sectionLoading" :disabled="readSectionIndex >= readSections.length - 1 || sectionLoading" @click="selectReadSection(readSectionIndex + 1)">下一节</el-button>
           </div>
         </div>
       </div>
@@ -1414,7 +1428,7 @@ onBeforeUnmount(() => {
                 v-html="safeRenderedHtml"
               />
               <nav v-if="readSections.length > 1" class="document-view__chapter-footer" aria-label="章节导航">
-                <el-button size="small" :disabled="readSectionIndex === 0" @click="selectReadSection(readSectionIndex - 1)">
+                <el-button size="small" :loading="sectionLoading" :disabled="readSectionIndex === 0 || sectionLoading" @click="selectReadSection(readSectionIndex - 1)">
                   上一节
                 </el-button>
                 <el-select
@@ -1422,6 +1436,7 @@ onBeforeUnmount(() => {
                   size="small"
                   class="document-view__chapter-footer-select"
                   aria-label="跳转章节"
+                  :disabled="sectionLoading"
                   @update:model-value="selectReadSection(Number($event))"
                 >
                   <el-option
@@ -1432,7 +1447,7 @@ onBeforeUnmount(() => {
                   />
                 </el-select>
                 <span class="document-view__chapter-footer-status">{{ readSectionIndex + 1 }} / {{ readSections.length }}</span>
-                <el-button size="small" :disabled="readSectionIndex >= readSections.length - 1" @click="selectReadSection(readSectionIndex + 1)">
+                <el-button size="small" :loading="sectionLoading" :disabled="readSectionIndex >= readSections.length - 1 || sectionLoading" @click="selectReadSection(readSectionIndex + 1)">
                   下一节
                 </el-button>
               </nav>
@@ -1675,6 +1690,7 @@ onBeforeUnmount(() => {
 .document-view__reading-content {
   display: grid;
   gap: 18px;
+  scroll-margin-top: calc(var(--pfmt-topbar-height) + 16px);
 }
 
 .document-view__chapter-footer {
