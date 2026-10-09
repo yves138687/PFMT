@@ -163,6 +163,11 @@ export interface DocumentContent {
   content: string
   editable: boolean
   rendered_html?: string | null
+  read_sections?: Array<{
+    title: string
+    source_line: number
+  }> | null
+  active_section_index?: number | null
 }
 
 export interface DocumentSavePayload {

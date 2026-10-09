@@ -202,6 +202,13 @@ class TextReadResponse(BaseModel):
     content: str
 
 
+class DocumentReadSection(BaseModel):
+    """A lightweight chapter descriptor used by read-mode navigation."""
+
+    title: str
+    source_line: int
+
+
 class DocumentReadResponse(BaseModel):
     """统一文档读取响应，覆盖纯文本、Markdown 和 HTML。"""
 
@@ -215,6 +222,8 @@ class DocumentReadResponse(BaseModel):
     content: str
     editable: bool = True
     rendered_html: str | None = None
+    read_sections: list[DocumentReadSection] | None = None
+    active_section_index: int | None = None
 
 
 class DocumentSaveRequest(BaseModel):

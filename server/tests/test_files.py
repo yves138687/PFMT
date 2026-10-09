@@ -1452,6 +1452,30 @@ def test_large_document_read_omits_duplicate_rendered_html(
     assert response.json()["rendered_html"] is None
 
 
+def test_document_read_section_returns_only_requested_chapter(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    content = "# 第一章\n\n甲\n\n# 第二章\n\n乙\n\n# 第三章\n\n丙"
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("chapters.md", content.encode("utf-8"), "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+
+    response = client.get(
+        f"/api/files/{upload_response.json()['file_id']}/document?read_section=1",
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["content"] == "# 第二章\n\n乙\n"
+    assert body["active_section_index"] == 1
+    assert [item["title"] for item in body["read_sections"]] == ["第一章", "第二章", "第三章"]
+
+
 def test_txt_upload_auto_converts_to_markdown_when_enabled(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

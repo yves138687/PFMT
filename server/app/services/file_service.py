@@ -28,6 +28,7 @@ from app.schemas.file import (
     DocumentConvertRequest,
     DocumentMergeRequest,
     DocumentReadResponse,
+    DocumentReadSection,
     DocumentSaveRequest,
     FileBatchDeleteRequest,
     FileConflictStrategy,
@@ -66,6 +67,7 @@ from app.utils.file_type import (
     normalize_extension,
 )
 from app.utils.ids import new_business_id
+from app.utils.document_reading import build_read_sections
 
 
 # Large documents are rendered one section at a time in the browser. Returning a
@@ -603,6 +605,7 @@ class FileService:
         self,
         *,
         file_id: str,
+        read_section: int | None = None,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> DocumentReadResponse:
@@ -641,6 +644,11 @@ class FileService:
                 client_ip=client_ip,
             )
             self.db.commit()
+            sections = build_read_sections(content, document_format) if read_section is not None else []
+            active_section = None
+            if read_section is not None:
+                active_section = sections[min(read_section, len(sections) - 1)]
+                content = active_section.content
             return DocumentReadResponse(
                 file_id=file_info.file_id,
                 original_name=file_info.original_name,
@@ -651,9 +659,11 @@ class FileService:
                 content=content,
                 rendered_html=(
                     self._render_document_html(content, document_format)
-                    if file_info.size_bytes < READ_RENDERED_HTML_MAX_BYTES
+                    if read_section is not None or file_info.size_bytes < READ_RENDERED_HTML_MAX_BYTES
                     else None
                 ),
+                read_sections=[DocumentReadSection(title=section.title, source_line=section.source_line) for section in sections] or None,
+                active_section_index=(min(read_section, len(sections) - 1) if read_section is not None else None),
             )
         except Exception:
             self.db.rollback()

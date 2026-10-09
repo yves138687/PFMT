@@ -128,8 +128,12 @@ export const filesApi = {
   issueEmbedToken(fileId: string) {
     return http.post<FileEmbedToken>(`/files/${encodeURIComponent(fileId)}/embed-token`)
   },
-  getDocument(fileId: string) {
-    return http.get<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`)
+  getDocument(fileId: string, options: { readSection?: number } = {}) {
+    return http.get<DocumentContent>(`/files/${encodeURIComponent(fileId)}/document`, {
+      query: {
+        read_section: options.readSection
+      }
+    })
   },
   createDocument(payload: DocumentCreatePayload) {
     return http.post<FileDetail>('/files/document', payload)

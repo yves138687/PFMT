@@ -133,6 +133,14 @@ const outlineItems = computed(() => {
     editorVersion.value
     return buildHtmlOutline(editor.value?.getHTML() ?? '')
   }
+  if (currentDocument.read_sections) {
+    return currentDocument.read_sections.map((section, index) => ({
+      id: `read-section-${index}`,
+      title: section.title,
+      level: 1 as const,
+      sourceLine: section.source_line
+    }))
+  }
   if (currentDocument.document_format === 'markdown') {
     return buildMarkdownOutline(sourceContent.value)
   }
@@ -142,7 +150,17 @@ const showOutline = computed(() => documentContent.value?.document_format !== 'p
 const showAiAssistant = computed(() => mode.value === 'edit' && aiPanelOpen.value)
 const readSections = computed(() => {
   const currentDocument = documentContent.value
-  return currentDocument ? buildReadSections(sourceContent.value, currentDocument.document_format) : []
+  if (!currentDocument) {
+    return []
+  }
+  if (currentDocument.read_sections) {
+    return currentDocument.read_sections.map((section, index) => ({
+      title: section.title,
+      sourceLine: section.source_line,
+      content: index === readSectionIndex.value ? sourceContent.value : ''
+    }))
+  }
+  return buildReadSections(sourceContent.value, currentDocument.document_format)
 })
 const activeReadSection = computed(() => readSections.value[readSectionIndex.value] ?? readSections.value[0])
 const readSectionLabel = computed(() => {
@@ -273,12 +291,17 @@ async function setMode(nextMode: DocumentMode) {
     selectedText.value = ''
   }
   mode.value = nextMode
+  if ((nextMode === 'edit' || nextMode === 'source') && previousMode === 'read') {
+    await loadDocument()
+    return
+  }
   if (nextMode === 'edit') {
     disconnectRenderedEmbedObserver()
     await prepareEditorContent()
   }
   if (nextMode === 'read') {
-    await refreshRenderedHtml()
+    await loadDocument(0)
+    return
   }
   if (nextMode === 'source') {
     disconnectRenderedEmbedObserver()
@@ -446,7 +469,7 @@ async function refreshRenderedHtml() {
   await renderReadableHtml(DOMPurify.sanitize(rendered))
 }
 
-async function loadDocument() {
+async function loadDocument(readSection?: number) {
   if (!fileId.value) {
     documentContent.value = null
     sourceContent.value = ''
@@ -460,13 +483,16 @@ async function loadDocument() {
   try {
     const requestedFileId = fileId.value
     const nextMode = documentContent.value?.file_id === requestedFileId ? mode.value : 'read'
-    const response = await filesApi.getDocument(fileId.value)
+    const response = await filesApi.getDocument(
+      fileId.value,
+      nextMode === 'read' ? { readSection: readSection ?? 0 } : {}
+    )
     if (fileId.value !== requestedFileId) {
       return
     }
     documentContent.value = response
     sourceContent.value = response.content
-    readSectionIndex.value = 0
+    readSectionIndex.value = response.active_section_index ?? 0
     activeOutlineId.value = ''
     mode.value = nextMode
     editorContentRequestId += 1
@@ -611,8 +637,7 @@ async function selectReadSection(index: number) {
   if (nextIndex === readSectionIndex.value) {
     return
   }
-  readSectionIndex.value = nextIndex
-  await refreshRenderedHtml()
+  await loadDocument(nextIndex)
   canvasRef.value?.scrollTo({ top: 0 })
 }
 
@@ -1126,7 +1151,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="document-view__actions">
         <el-button :icon="ArrowLeft" @click="backToFolder">返回列表</el-button>
-        <el-button :icon="Refresh" :loading="loading" @click="loadDocument">刷新</el-button>
+        <el-button :icon="Refresh" :loading="loading" @click="loadDocument()">刷新</el-button>
         <el-button :icon="Download" :loading="exporting" :disabled="!documentContent" @click="exportDocument">导出</el-button>
         <el-button v-if="mode !== 'read'" :icon="Switch" :disabled="!documentContent" @click="openConvertDialog">转换</el-button>
         <el-button v-if="mode !== 'read'" :icon="MagicStick" :disabled="!documentContent" @click="beautifyDocument">整理文本</el-button>

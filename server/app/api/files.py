@@ -402,6 +402,7 @@ def update_file_remark(
 @router.get("/{file_id}/document", response_model=DocumentReadResponse)
 def read_document(
     file_id: str,
+    read_section: int | None = Query(default=None, ge=0),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -411,6 +412,7 @@ def read_document(
 
     return FileService(db, settings).read_document(
         file_id=file_id,
+        read_section=read_section,
         current_user=current_user,
         client_ip=client_ip,
     )
