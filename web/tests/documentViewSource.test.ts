@@ -165,4 +165,11 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('document-view__reading-row')
     expect(source).not.toContain('max-height: calc(100vh - 210px);')
   })
+
+  it('provides chapter navigation at the end of a rendered section', () => {
+    expect(source).toContain('class="document-view__chapter-footer"')
+    expect(source).toContain('aria-label="章节导航"')
+    expect(source).toContain('class="document-view__chapter-footer-select"')
+    expect(source).toContain('class="document-view__chapter-footer-status"')
+  })
 })

@@ -1407,12 +1407,36 @@ onBeforeUnmount(() => {
             @mouseup="updateSelectedText"
             @keyup="updateSelectedText"
           >
-            <article
-              v-if="mode === 'read'"
-              class="document-view__rendered document-view__prose"
-              :style="{ '--document-read-font-size': `${readFontSize}px` }"
-              v-html="safeRenderedHtml"
-            />
+            <div v-if="mode === 'read'" class="document-view__reading-content">
+              <article
+                class="document-view__rendered document-view__prose"
+                :style="{ '--document-read-font-size': `${readFontSize}px` }"
+                v-html="safeRenderedHtml"
+              />
+              <nav v-if="readSections.length > 1" class="document-view__chapter-footer" aria-label="章节导航">
+                <el-button size="small" :disabled="readSectionIndex === 0" @click="selectReadSection(readSectionIndex - 1)">
+                  上一节
+                </el-button>
+                <el-select
+                  :model-value="readSectionIndex"
+                  size="small"
+                  class="document-view__chapter-footer-select"
+                  aria-label="跳转章节"
+                  @update:model-value="selectReadSection(Number($event))"
+                >
+                  <el-option
+                    v-for="(section, index) in readSections"
+                    :key="`${section.sourceLine}-${index}`"
+                    :label="`${index + 1}. ${section.title}`"
+                    :value="index"
+                  />
+                </el-select>
+                <span class="document-view__chapter-footer-status">{{ readSectionIndex + 1 }} / {{ readSections.length }}</span>
+                <el-button size="small" :disabled="readSectionIndex >= readSections.length - 1" @click="selectReadSection(readSectionIndex + 1)">
+                  下一节
+                </el-button>
+              </nav>
+            </div>
             <EditorContent v-else-if="mode === 'edit'" class="document-view__editor" :editor="editor" />
             <textarea
               v-else
@@ -1646,6 +1670,35 @@ onBeforeUnmount(() => {
 .document-view__editor,
 .document-view__source {
   min-height: calc(62vh - 36px);
+}
+
+.document-view__reading-content {
+  display: grid;
+  gap: 18px;
+}
+
+.document-view__chapter-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 12px;
+  background: rgb(255 255 255 / 78%);
+  border: 1px solid #e0e7f0;
+  border-radius: 10px;
+}
+
+.document-view__chapter-footer-select {
+  width: min(280px, 36vw);
+}
+
+.document-view__chapter-footer-status {
+  min-width: 48px;
+  color: var(--pfmt-text-secondary);
+  font-size: 13px;
+  text-align: center;
 }
 
 .document-view__prose,
@@ -1970,6 +2023,19 @@ onBeforeUnmount(() => {
     border-left: 0;
     border-radius: 0;
     box-shadow: none;
+  }
+
+  .document-view__chapter-footer {
+    width: 100%;
+    padding: 10px;
+    border-radius: 0;
+    border-right: 0;
+    border-left: 0;
+  }
+
+  .document-view__chapter-footer-select {
+    flex: 1;
+    width: auto;
   }
 
   .document-view__source {
