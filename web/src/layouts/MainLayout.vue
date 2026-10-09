@@ -18,6 +18,7 @@ function detectMobileViewport() {
 const isMobileViewport = ref(detectMobileViewport())
 const sidebarCollapsed = ref(isMobileViewport.value)
 let mobileMediaQuery: MediaQueryList | null = null
+const isDocumentRoute = computed(() => route.name === 'document')
 
 const layoutClass = computed(() => ({
   'main-layout--collapsed': sidebarCollapsed.value,
@@ -32,7 +33,7 @@ function handleViewportChange(event?: MediaQueryListEvent | MediaQueryList) {
 
   if (matches && !wasMobile) {
     sidebarCollapsed.value = true
-  } else if (!matches && wasMobile) {
+  } else if (!matches && wasMobile && !isDocumentRoute.value) {
     sidebarCollapsed.value = false
   }
 }
@@ -62,8 +63,14 @@ onBeforeUnmount(() => {
 watch(
   () => route.fullPath,
   () => {
+    if (isDocumentRoute.value) {
+      // Reading has its own outline. Hide the resource tree by default so a
+      // medium-width workspace does not spend two columns on navigation.
+      sidebarCollapsed.value = true
+    }
     closeMobileSidebar()
-  }
+  },
+  { immediate: true }
 )
 
 watch(isMobileViewport, (value) => {

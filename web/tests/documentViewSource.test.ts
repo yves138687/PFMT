@@ -130,7 +130,7 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('const readFontSize = ref(DEFAULT_READ_FONT_SIZE)')
     expect(source).toContain('function decreaseReadFontSize()')
     expect(source).toContain('function increaseReadFontSize()')
-    expect(source).toContain('v-if="mode === \'read\'" class="document-view__read-font-controls"')
+    expect(source).toContain('v-if="mode === \'read\'" class="document-view__reading-row"')
     expect(source).toContain('@click="decreaseReadFontSize"')
     expect(source).toContain('@click="increaseReadFontSize"')
     expect(source).toContain('{{ readFontSize }}px')
@@ -156,5 +156,13 @@ describe('DocumentView source contract', () => {
     expect(source).toContain("if (previousMode === 'edit' && nextMode !== 'edit')")
     expect(source).toContain('editor.value?.commands.clearContent()')
     expect(source).toContain('编辑文档')
+  })
+
+  it('adapts the reader to its available workspace width', () => {
+    expect(source).toContain('container-type: inline-size;')
+    expect(source).toContain('@container (max-width: 1040px)')
+    expect(source).toContain('@container (max-width: 720px)')
+    expect(source).toContain('document-view__reading-row')
+    expect(source).not.toContain('max-height: calc(100vh - 210px);')
   })
 })

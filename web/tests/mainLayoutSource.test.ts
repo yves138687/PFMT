@@ -23,6 +23,12 @@ describe('MainLayout mobile source contract', () => {
     expect(directoryTreeSource).toContain('function openSettings')
   })
 
+  it('defaults the resource tree to collapsed while a document has its own outline', () => {
+    expect(layoutSource).toContain("const isDocumentRoute = computed(() => route.name === 'document')")
+    expect(layoutSource).toContain('sidebarCollapsed.value = true')
+    expect(layoutSource).toContain('!isDocumentRoute.value')
+  })
+
   it('uses a discreet brand gesture for toggling hidden content on all devices', () => {
     expect(topNavigationSource).toContain('HIDDEN_ENTRY_CLICKS = 5')
     expect(topNavigationSource).toContain('@click.prevent="handleBrandClick"')

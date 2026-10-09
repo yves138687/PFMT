@@ -1137,34 +1137,37 @@ onBeforeUnmount(() => {
     </div>
 
     <section class="work-panel">
-      <div class="panel-header">
-        <el-radio-group :model-value="mode" size="small" @change="handleModeChange">
-          <el-radio-button label="read">阅读</el-radio-button>
-          <el-radio-button label="edit">编辑</el-radio-button>
-          <el-radio-button label="source">源码</el-radio-button>
-        </el-radio-group>
-        <span class="muted document-view__mode-label">{{ mode === 'read' ? '专注阅读 · 分章节渲染' : '创作与整理' }}</span>
-        <el-button
-          v-if="mode === 'read'"
-          type="primary"
-          size="small"
-          :disabled="!documentContent"
-          @click="setMode('edit')"
-        >
-          编辑文档
-        </el-button>
-        <el-button
-          v-else-if="mode === 'edit' && !showAiAssistant"
-          size="small"
-          :icon="MagicStick"
-          @click="openAiAssistant"
-        >
-          AI 助手
-        </el-button>
-        <el-button v-if="showOutline" class="document-view__outline-button" size="small" @click="outlineDrawerVisible = true">
-          目录
-        </el-button>
-        <div v-if="mode === 'read'" class="document-view__read-font-controls">
+      <div class="panel-header document-view__header">
+        <div class="document-view__mode-row">
+          <el-radio-group :model-value="mode" size="small" @change="handleModeChange">
+            <el-radio-button label="read">阅读</el-radio-button>
+            <el-radio-button label="edit">编辑</el-radio-button>
+            <el-radio-button label="source">源码</el-radio-button>
+          </el-radio-group>
+          <span class="muted document-view__mode-label">{{ mode === 'read' ? '专注阅读 · 分章节渲染' : '创作与整理' }}</span>
+          <el-button
+            v-if="mode === 'read'"
+            type="primary"
+            size="small"
+            :disabled="!documentContent"
+            @click="setMode('edit')"
+          >
+            编辑文档
+          </el-button>
+          <el-button
+            v-else-if="mode === 'edit' && !showAiAssistant"
+            size="small"
+            :icon="MagicStick"
+            @click="openAiAssistant"
+          >
+            AI 助手
+          </el-button>
+          <el-button v-if="showOutline" class="document-view__outline-button" size="small" @click="outlineDrawerVisible = true">
+            目录
+          </el-button>
+        </div>
+        <div v-if="mode === 'read'" class="document-view__reading-row">
+          <div class="document-view__read-font-controls">
           <el-button size="small" title="减小阅读字号" :disabled="readFontSize <= MIN_READ_FONT_SIZE" @click="decreaseReadFontSize">
             A−
           </el-button>
@@ -1172,8 +1175,8 @@ onBeforeUnmount(() => {
           <el-button size="small" title="增大阅读字号" :disabled="readFontSize >= MAX_READ_FONT_SIZE" @click="increaseReadFontSize">
             A+
           </el-button>
-        </div>
-        <div v-if="mode === 'read' && readSections.length > 1" class="document-view__read-section-controls">
+          </div>
+          <div v-if="readSections.length > 1" class="document-view__read-section-controls">
           <el-button size="small" :disabled="readSectionIndex === 0" @click="selectReadSection(readSectionIndex - 1)">上一节</el-button>
           <el-select
             :model-value="readSectionIndex"
@@ -1191,6 +1194,7 @@ onBeforeUnmount(() => {
           </el-select>
           <span class="document-view__read-section-label">{{ readSectionLabel }}</span>
           <el-button size="small" :disabled="readSectionIndex >= readSections.length - 1" @click="selectReadSection(readSectionIndex + 1)">下一节</el-button>
+          </div>
         </div>
       </div>
       <div v-loading="loading" class="panel-body document-view__body">
@@ -1459,6 +1463,7 @@ onBeforeUnmount(() => {
 .document-view {
   display: grid;
   gap: 16px;
+  container-type: inline-size;
 }
 
 .document-view__actions {
@@ -1471,6 +1476,25 @@ onBeforeUnmount(() => {
 .document-view__outline-button,
 .document-view__toolbar-more {
   display: none;
+}
+
+.document-view__header {
+  display: grid;
+  align-items: center;
+  justify-content: stretch;
+  gap: 10px;
+}
+
+.document-view__mode-row,
+.document-view__reading-row {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.document-view__reading-row {
+  justify-content: space-between;
 }
 
 .document-view__body {
@@ -1516,6 +1540,7 @@ onBeforeUnmount(() => {
 .document-view__read-section-controls {
   display: flex;
   align-items: center;
+  min-width: 0;
   gap: 6px;
 }
 
@@ -1524,7 +1549,7 @@ onBeforeUnmount(() => {
 }
 
 .document-view__read-section-label {
-  max-width: 220px;
+  max-width: 180px;
   overflow: hidden;
   color: var(--pfmt-text-secondary);
   font-size: 13px;
@@ -1573,7 +1598,6 @@ onBeforeUnmount(() => {
 .document-view__canvas {
   flex: 1;
   min-height: 62vh;
-  max-height: calc(100vh - 210px);
   overflow: auto;
   padding: 22px 24px;
   background: #fff;
@@ -1584,7 +1608,7 @@ onBeforeUnmount(() => {
 }
 
 .document-view__canvas--read {
-  padding: 34px clamp(24px, 5vw, 72px);
+  padding: 34px clamp(24px, 6vw, 96px);
   background: #f5f7fb;
 }
 
@@ -1609,13 +1633,60 @@ onBeforeUnmount(() => {
 }
 
 .document-view__canvas--read .document-view__prose {
-  max-width: 800px;
+  max-width: 760px;
   min-height: calc(62vh - 68px);
   padding: clamp(28px, 5vw, 56px);
   background: #fff;
   border: 1px solid #e9edf4;
   border-radius: 12px;
   box-shadow: 0 10px 32px rgb(15 23 42 / 6%);
+}
+
+@container (max-width: 1040px) {
+  .document-view__workspace--with-outline,
+  .document-view__workspace--with-ai {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .document-view__desktop-outline {
+    display: none;
+  }
+
+  .document-view__outline-button {
+    display: inline-flex;
+  }
+
+  .document-view__read-section-label {
+    display: none;
+  }
+}
+
+@container (max-width: 720px) {
+  .document-view__mode-label {
+    display: none;
+  }
+
+  .document-view__header {
+    align-items: stretch;
+  }
+
+  .document-view__mode-row,
+  .document-view__reading-row {
+    flex-wrap: wrap;
+  }
+
+  .document-view__reading-row {
+    align-items: stretch;
+  }
+
+  .document-view__read-section-controls {
+    flex: 1 1 100%;
+  }
+
+  .document-view__read-section-select {
+    flex: 1;
+    width: auto;
+  }
 }
 
 .document-view__prose {
@@ -1837,22 +1908,7 @@ onBeforeUnmount(() => {
     margin-top: 12px;
   }
 
-  .document-view :deep(.panel-header) {
-    align-items: flex-start;
-    flex-wrap: wrap;
-    padding: 12px;
-  }
-
-  .document-view__outline-button {
-    display: inline-flex;
-  }
-
-  .document-view__mode-label {
-    display: none;
-  }
-
   .document-view__read-font-controls {
-    width: 100%;
     margin-left: 0;
   }
 
@@ -1873,6 +1929,22 @@ onBeforeUnmount(() => {
   .document-view__canvas {
     min-height: 56vh;
     padding: 16px;
+  }
+
+  .document-view__canvas--read {
+    padding: 14px 0;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+  }
+
+  .document-view__canvas--read .document-view__prose {
+    min-height: calc(56vh - 28px);
+    padding: 24px 20px;
+    border-right: 0;
+    border-left: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .document-view__source {
