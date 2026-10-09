@@ -120,7 +120,7 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('beautifyText(original, currentDocument.document_format)')
     expect(source).toContain('ElMessageBox.confirm')
     expect(source).toContain('整理文本')
-    expect(source).toContain(":disabled=\"!documentContent || mode === 'read'\"")
+    expect(source).toContain('v-if="mode !== \'read\'" :icon="MagicStick"')
   })
 
   it('provides temporary reading-only font-size controls', () => {
@@ -148,5 +148,13 @@ describe('DocumentView source contract', () => {
     expect(source).toContain('document-view__desktop-outline')
     expect(source).toContain('document-view__mode-label')
     expect(source).toContain('@media (max-width: 820px)')
+  })
+
+  it('keeps AI and the rich editor out of the reading workspace', () => {
+    expect(source).toContain("const showAiAssistant = computed(() => mode.value === 'edit' && aiPanelOpen.value)")
+    expect(source).toContain('v-if="showAiAssistant" class="document-view__ai-workspace"')
+    expect(source).toContain("if (previousMode === 'edit' && nextMode !== 'edit')")
+    expect(source).toContain('editor.value?.commands.clearContent()')
+    expect(source).toContain('编辑文档')
   })
 })

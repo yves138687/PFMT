@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
@@ -32,7 +32,6 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 
 import { filesApi } from '@/api/files'
-import AiAssistantPanel from '@/components/AiAssistantPanel.vue'
 import DocumentEmbedDialog from '@/components/DocumentEmbedDialog.vue'
 import DocumentImagePreview from '@/components/DocumentImagePreview.vue'
 import DocumentOutline from '@/components/DocumentOutline.vue'
@@ -54,6 +53,10 @@ import { getEmbedToken, resolveEmbedUrls, stripEmbedTokens } from '@/utils/embed
 import { renderMarkdown } from '@/utils/markdown'
 import { beautifyText } from '@/utils/textBeautify'
 
+// AI is an optional editing tool. Keep its view and API client out of the
+// initial reading bundle until the user explicitly opens the workbench.
+const AiAssistantPanel = defineAsyncComponent(() => import('@/components/AiAssistantPanel.vue'))
+
 type DocumentMode = 'read' | 'edit' | 'source'
 
 const DEFAULT_READ_FONT_SIZE = 15
@@ -70,6 +73,7 @@ const sourceContent = ref('')
 const mode = ref<DocumentMode>('read')
 const readFontSize = ref(DEFAULT_READ_FONT_SIZE)
 const readSectionIndex = ref(0)
+const aiPanelOpen = ref(false)
 const loading = ref(false)
 const saving = ref(false)
 const converting = ref(false)
@@ -135,6 +139,7 @@ const outlineItems = computed(() => {
   return buildHtmlOutline(safeRenderedHtml.value)
 })
 const showOutline = computed(() => documentContent.value?.document_format !== 'plain_text')
+const showAiAssistant = computed(() => mode.value === 'edit' && aiPanelOpen.value)
 const readSections = computed(() => {
   const currentDocument = documentContent.value
   return currentDocument ? buildReadSections(sourceContent.value, currentDocument.document_format) : []
@@ -260,8 +265,12 @@ async function setMode(nextMode: DocumentMode) {
       return
     }
   }
-  if (mode.value === 'edit' && nextMode === 'source') {
+  if (previousMode === 'edit' && nextMode !== 'edit') {
     sourceContent.value = currentSaveContent()
+    // Keep the unsaved work in the source buffer, then release Tiptap's full
+    // ProseMirror tree while the user reads or works in source mode.
+    editor.value?.commands.clearContent()
+    selectedText.value = ''
   }
   mode.value = nextMode
   if (nextMode === 'edit') {
@@ -291,6 +300,14 @@ function handleModeChange(value: string | number | boolean | undefined) {
   if (value === 'read' || value === 'edit' || value === 'source') {
     void setMode(value)
   }
+}
+
+function openAiAssistant() {
+  aiPanelOpen.value = true
+}
+
+function closeAiAssistant() {
+  aiPanelOpen.value = false
 }
 
 function decreaseReadFontSize() {
@@ -1111,9 +1128,9 @@ onBeforeUnmount(() => {
         <el-button :icon="ArrowLeft" @click="backToFolder">返回列表</el-button>
         <el-button :icon="Refresh" :loading="loading" @click="loadDocument">刷新</el-button>
         <el-button :icon="Download" :loading="exporting" :disabled="!documentContent" @click="exportDocument">导出</el-button>
-        <el-button :icon="Switch" :disabled="!documentContent" @click="openConvertDialog">转换</el-button>
-        <el-button :icon="MagicStick" :disabled="!documentContent || mode === 'read'" @click="beautifyDocument">整理文本</el-button>
-        <el-button type="primary" :icon="UploadFilled" :loading="saving" :disabled="!documentContent" @click="saveDocument">
+        <el-button v-if="mode !== 'read'" :icon="Switch" :disabled="!documentContent" @click="openConvertDialog">转换</el-button>
+        <el-button v-if="mode !== 'read'" :icon="MagicStick" :disabled="!documentContent" @click="beautifyDocument">整理文本</el-button>
+        <el-button v-if="mode !== 'read'" type="primary" :icon="UploadFilled" :loading="saving" :disabled="!documentContent" @click="saveDocument">
           保存
         </el-button>
       </div>
@@ -1126,7 +1143,24 @@ onBeforeUnmount(() => {
           <el-radio-button label="edit">编辑</el-radio-button>
           <el-radio-button label="source">源码</el-radio-button>
         </el-radio-group>
-        <span class="muted document-view__mode-label">统一文档打开</span>
+        <span class="muted document-view__mode-label">{{ mode === 'read' ? '专注阅读 · 分章节渲染' : '创作与整理' }}</span>
+        <el-button
+          v-if="mode === 'read'"
+          type="primary"
+          size="small"
+          :disabled="!documentContent"
+          @click="setMode('edit')"
+        >
+          编辑文档
+        </el-button>
+        <el-button
+          v-else-if="mode === 'edit' && !showAiAssistant"
+          size="small"
+          :icon="MagicStick"
+          @click="openAiAssistant"
+        >
+          AI 助手
+        </el-button>
         <el-button v-if="showOutline" class="document-view__outline-button" size="small" @click="outlineDrawerVisible = true">
           目录
         </el-button>
@@ -1318,7 +1352,21 @@ onBeforeUnmount(() => {
           </el-button-group>
         </div>
 
-        <div v-if="documentContent" class="document-view__workspace document-view__workspace--with-side">
+        <div
+          v-if="documentContent"
+          class="document-view__workspace"
+          :class="{
+            'document-view__workspace--with-outline': showOutline,
+            'document-view__workspace--with-ai': showAiAssistant
+          }"
+        >
+          <DocumentOutline
+            v-if="showOutline"
+            class="document-view__desktop-outline"
+            :items="outlineItems"
+            :active-id="activeOutlineId"
+            @navigate="scrollToOutline"
+          />
           <div
             ref="canvasRef"
             v-loading="editorLoading"
@@ -1346,21 +1394,18 @@ onBeforeUnmount(() => {
               @scroll="updateActiveOutline"
             />
           </div>
-          <div class="document-view__side-panels">
+          <aside v-if="showAiAssistant" class="document-view__ai-workspace">
+            <div class="document-view__ai-heading">
+              <span>AI 创作工作区</span>
+              <el-button size="small" text @click="closeAiAssistant">收起</el-button>
+            </div>
             <AiAssistantPanel
               :document="documentContent"
               :selected-text="selectedText"
               :hidden="Boolean(documentContent?.is_hidden)"
               @summary-written="handleSummaryWritten"
             />
-            <DocumentOutline
-              v-if="showOutline"
-              class="document-view__desktop-outline"
-              :items="outlineItems"
-              :active-id="activeOutlineId"
-              @navigate="scrollToOutline"
-            />
-          </div>
+          </aside>
         </div>
         <el-empty v-else description="暂无文档内容" />
       </div>
@@ -1498,17 +1543,31 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-}
-
-.document-view__workspace--with-side {
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   align-items: start;
 }
 
-.document-view__side-panels {
-  display: grid;
-  gap: 12px;
+.document-view__workspace--with-outline {
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+}
+
+.document-view__workspace--with-ai {
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(280px, 320px);
+}
+
+.document-view__ai-workspace {
+  position: sticky;
+  top: 16px;
   min-width: 0;
+}
+
+.document-view__ai-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 2px 8px;
+  color: var(--pfmt-text-secondary);
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .document-view__canvas {
@@ -1522,6 +1581,11 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   color: var(--pfmt-text);
   line-height: 1.72;
+}
+
+.document-view__canvas--read {
+  padding: 34px clamp(24px, 5vw, 72px);
+  background: #f5f7fb;
 }
 
 .document-view__canvas--source {
@@ -1542,6 +1606,16 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   color: var(--pfmt-text);
   line-height: 1.72;
+}
+
+.document-view__canvas--read .document-view__prose {
+  max-width: 800px;
+  min-height: calc(62vh - 68px);
+  padding: clamp(28px, 5vw, 56px);
+  background: #fff;
+  border: 1px solid #e9edf4;
+  border-radius: 12px;
+  box-shadow: 0 10px 32px rgb(15 23 42 / 6%);
 }
 
 .document-view__prose {
@@ -1824,11 +1898,14 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 960px) {
-  .document-view__workspace--with-side {
+  .document-view__workspace--with-outline,
+  .document-view__workspace--with-ai {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .document-view__side-panels {
+  .document-view__desktop-outline,
+  .document-view__ai-workspace {
+    position: static;
     order: 2;
   }
 

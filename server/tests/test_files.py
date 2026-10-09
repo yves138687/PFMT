@@ -1431,6 +1431,27 @@ def test_document_endpoint_reads_text_markdown_and_html(
         assert body["rendered_html"]
 
 
+def test_large_document_read_omits_duplicate_rendered_html(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """大文档阅读由前端按章节渲染，接口不应再额外传输整篇 HTML。"""
+
+    content = ("# 章节\n\n" + "正文内容\n\n") * 70_000
+    upload_response = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root", "encryption_enabled": "true"},
+        files={"file": ("large.md", content.encode("utf-8"), "text/markdown")},
+    )
+    assert upload_response.status_code == 201
+
+    response = client.get(f"/api/files/{upload_response.json()['file_id']}/document", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["content"] == content
+    assert response.json()["rendered_html"] is None
+
+
 def test_txt_upload_auto_converts_to_markdown_when_enabled(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:

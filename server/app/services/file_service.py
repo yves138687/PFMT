@@ -68,6 +68,12 @@ from app.utils.file_type import (
 from app.utils.ids import new_business_id
 
 
+# Large documents are rendered one section at a time in the browser. Returning a
+# second, fully rendered HTML copy for those files wastes bandwidth and keeps a
+# large duplicate string alive in the page.
+READ_RENDERED_HTML_MAX_BYTES = 512 * 1024
+
+
 class _PlainTextExtractor(HTMLParser):
     """从 HTML 中提取用于 plain text / Markdown 转换的可读文本。"""
 
@@ -643,7 +649,11 @@ class FileService:
                 is_hidden=file_info.is_hidden,
                 document_format=document_format,
                 content=content,
-                rendered_html=self._render_document_html(content, document_format),
+                rendered_html=(
+                    self._render_document_html(content, document_format)
+                    if file_info.size_bytes < READ_RENDERED_HTML_MAX_BYTES
+                    else None
+                ),
             )
         except Exception:
             self.db.rollback()
@@ -778,7 +788,11 @@ class FileService:
                 is_hidden=file_info.is_hidden,
                 document_format=document_format,
                 content=payload.content,
-                rendered_html=self._render_document_html(payload.content, document_format),
+                rendered_html=(
+                    self._render_document_html(payload.content, document_format)
+                    if file_info.size_bytes < READ_RENDERED_HTML_MAX_BYTES
+                    else None
+                ),
             )
         except Exception:
             self.db.rollback()
