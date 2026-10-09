@@ -533,6 +533,13 @@ def test_file_tag_suggestions_match_existing_tags_and_weight_full_document(
     assert items[0]["matched_count"] >= 8
     assert "向量检索" in names
 
+    oversized_response = client.post(
+        f"/api/files/{upload_response.json()['file_id']}/tag-suggestions",
+        headers=auth_headers,
+        params={"limit": 81},
+    )
+    assert oversized_response.status_code == 422
+
 
 def test_file_tag_suggestions_respect_hidden_visibility_and_file_type(
     client: TestClient, auth_headers: dict[str, str]

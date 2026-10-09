@@ -219,7 +219,7 @@ describe('filesApi', () => {
 
     await filesApi.suggestFileTags('file_1')
 
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/tag-suggestions')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/api/files/file_1/tag-suggestions?limit=80')
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('show_hidden')
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('POST')
   })

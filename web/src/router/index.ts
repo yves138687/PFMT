@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type Router, type RouterHistory, type RouteRecordRaw } from 'vue-router'
 
 import { hasAuthToken } from '@/utils/authStorage'
+import { clientLogger } from '@/utils/clientLogger'
 
 export const routes: RouteRecordRaw[] = [
   {
@@ -113,6 +114,7 @@ export function installRouteGuards(router: Router) {
     const isAuthenticated = hasAuthToken()
 
     if (to.meta.requiresAuth && !isAuthenticated) {
+      clientLogger.warn('router_auth_required_redirect', { to: to.fullPath })
       return {
         name: 'login',
         query: {
@@ -122,6 +124,7 @@ export function installRouteGuards(router: Router) {
     }
 
     if (to.meta.guestOnly && isAuthenticated) {
+      clientLogger.debug('router_guest_redirect', { to: to.fullPath })
       return { name: 'dashboard' }
     }
 

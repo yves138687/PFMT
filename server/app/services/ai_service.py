@@ -1,4 +1,6 @@
 import json
+import logging
+import time
 from typing import Any
 
 import httpx
@@ -32,6 +34,7 @@ class AiService:
         self.setting_service = SettingService(db)
         self.file_service = FileService(db, settings)
         self.audit_service = AuditService(db)
+        self.logger = logging.getLogger("pfmt.business")
 
     def create_task(
         self,
@@ -43,6 +46,10 @@ class AiService:
         """同步执行一次 AI 任务。"""
 
         if not self.setting_service.get_bool("ai.feature_enabled", False):
+            self.logger.warning(
+                "AI 任务创建被拒绝",
+                extra={"action": "ai_task_create", "result": "failed", "reason": "feature_disabled"},
+            )
             raise PermissionDeniedError("AI 功能未启用")
 
         provider = self._resolve_provider(payload.provider_id)
@@ -104,6 +111,21 @@ class AiService:
             client_ip=client_ip,
         )
         self.db.commit()
+        self.logger.info(
+            "AI 任务已创建",
+            extra={
+                "action": "ai_task_create",
+                "target_type": "file",
+                "target_id": file_info.file_id,
+                "user_id": current_user.user_id,
+                "result": "success",
+                "provider_id": task.model_provider,
+                "model_name": task.model_name,
+                "task_type": payload.task_type,
+                "is_hidden": file_info.is_hidden,
+                "client_ip": client_ip,
+            },
+        )
 
         try:
             answer = self._call_model(provider=provider, prompt_text=prompt_text)
@@ -122,6 +144,19 @@ class AiService:
                 client_ip=client_ip,
             )
             self.db.commit()
+            self.logger.warning(
+                "AI 任务执行失败",
+                extra={
+                    "action": "ai_task_complete",
+                    "target_type": "ai_task",
+                    "target_id": task.task_id,
+                    "user_id": current_user.user_id,
+                    "result": "failed",
+                    "reason": type(exc).__name__,
+                    "task_type": task.task_type,
+                    "client_ip": client_ip,
+                },
+            )
             raise
 
         self.db.refresh(task)
@@ -146,6 +181,19 @@ class AiService:
         )
         self.db.commit()
         self.db.refresh(task)
+        self.logger.info(
+            "AI 任务执行完成",
+            extra={
+                "action": "ai_task_complete",
+                "target_type": "ai_task",
+                "target_id": task.task_id,
+                "user_id": current_user.user_id,
+                "result": "success",
+                "count": len(answer),
+                "task_type": task.task_type,
+                "client_ip": client_ip,
+            },
+        )
         return self._to_response(task, answer=answer)
 
     def list_tasks(
@@ -198,12 +246,25 @@ class AiService:
             current_user=current_user,
             client_ip=client_ip,
         )
-        return self.file_service.write_ai_summary(
+        response = self.file_service.write_ai_summary(
             file_info=file_info,
             summary_content=answer.message_content.strip(),
             current_user=current_user,
             client_ip=client_ip,
         )
+        self.logger.info(
+            "AI 总结写入文件摘要",
+            extra={
+                "action": "ai_write_summary",
+                "target_type": "file",
+                "target_id": file_info.file_id,
+                "user_id": current_user.user_id,
+                "result": "success",
+                "count": len(answer.message_content.strip()),
+                "client_ip": client_ip,
+            },
+        )
+        return response
 
     def _resolve_provider(self, provider_id: str | None) -> dict[str, Any]:
         provider = self.setting_service.get_active_ai_provider(provider_id)
@@ -280,6 +341,8 @@ class AiService:
         return "\n\n".join(parts)
 
     def _call_model(self, *, provider: dict[str, Any], prompt_text: str) -> str:
+        """调用当前模型供应商；日志只记录元数据，不写入 prompt 或模型回答。"""
+
         return self._call_openai_compatible(
             provider=provider,
             messages=[
@@ -298,6 +361,15 @@ class AiService:
         """发送最小模型请求以验证 OpenAI-Compatible 配置。"""
 
         cls._validate_provider_shape(provider)
+        logging.getLogger("pfmt.business").info(
+            "AI 供应商连通性验证开始",
+            extra={
+                "action": "ai_provider_verify",
+                "result": "started",
+                "provider_id": str(provider.get("id") or provider.get("name") or "openai_compatible"),
+                "model_name": str(provider.get("model_name") or ""),
+            },
+        )
         answer = cls._call_openai_compatible(
             provider=provider,
             messages=[
@@ -310,10 +382,21 @@ class AiService:
             timeout=timeout,
             temperature=0,
         )
+        logging.getLogger("pfmt.business").info(
+            "AI 供应商连通性验证完成",
+            extra={
+                "action": "ai_provider_verify",
+                "result": "success",
+                "provider_id": str(provider.get("id") or provider.get("name") or "openai_compatible"),
+                "model_name": str(provider.get("model_name") or ""),
+            },
+        )
         return answer
 
     @classmethod
     def _validate_provider_shape(cls, provider: dict[str, Any]) -> None:
+        """校验供应商配置完整性；API Key 只参与请求，不进入响应或日志。"""
+
         if provider.get("provider_type") != "openai_compatible":
             raise AppError("当前仅支持 OpenAI Compatible 类型的 AI 配置")
         if not str(provider.get("base_url") or "").strip():
@@ -340,6 +423,7 @@ class AiService:
             "messages": messages,
             "temperature": temperature,
         }
+        started_at = time.perf_counter()
         try:
             with httpx.Client(timeout=timeout) as client:
                 response = client.post(
@@ -352,15 +436,50 @@ class AiService:
                 )
                 response.raise_for_status()
                 data = response.json()
+                status_code = getattr(response, "status_code", 200)
+                logging.getLogger("pfmt.business").info(
+                    "AI 模型调用完成",
+                    extra={
+                        "action": "ai_provider_call",
+                        "result": "success",
+                        "provider_id": str(provider.get("id") or provider.get("name") or "openai_compatible"),
+                        "model_name": model_name,
+                        "status_code": status_code,
+                        "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                    },
+                )
         except httpx.HTTPStatusError as exc:
             status_code = exc.response.status_code
             detail = cls._provider_error_detail(exc.response)
+            logging.getLogger("pfmt.business").warning(
+                "AI 模型调用失败",
+                extra={
+                    "action": "ai_provider_call",
+                    "result": "failed",
+                    "reason": "http_status_error",
+                    "provider_id": str(provider.get("id") or provider.get("name") or "openai_compatible"),
+                    "model_name": model_name,
+                    "status_code": status_code,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                },
+            )
             raise AppError(
                 f"AI 模型调用失败：上游返回 {status_code}。{detail}",
                 status_code=502,
                 error_code="ai_provider_error",
             ) from exc
         except httpx.HTTPError as exc:
+            logging.getLogger("pfmt.business").warning(
+                "AI 模型连接失败",
+                extra={
+                    "action": "ai_provider_call",
+                    "result": "failed",
+                    "reason": exc.__class__.__name__,
+                    "provider_id": str(provider.get("id") or provider.get("name") or "openai_compatible"),
+                    "model_name": model_name,
+                    "duration_ms": round((time.perf_counter() - started_at) * 1000, 2),
+                },
+            )
             raise AppError(
                 f"AI 模型连接失败：{exc.__class__.__name__}",
                 status_code=502,

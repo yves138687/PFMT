@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -28,12 +30,24 @@ class PathService:
         self.setting_service = SettingService(db)
         self.audit_service = AuditService(db)
         self.storage_service = StorageService(self.settings)
+        self.logger = logging.getLogger("pfmt.business")
 
     def get_tree(self, *, current_user: UserAccount | None = None) -> list[PathTreeNode]:
         """读取目录树；是否包含隐藏目录只由当前会话开关决定。"""
 
         include_hidden = self._include_hidden(current_user=current_user)
         paths = self.repository.list_active(include_hidden=include_hidden)
+        self.logger.info(
+            "目录树读取完成",
+            extra={
+                "action": "get_path_tree",
+                "target_type": "file_path",
+                "result": "success",
+                "count": len(paths),
+                "show_hidden": include_hidden,
+                "user_id": current_user.user_id if current_user else None,
+            },
+        )
         node_map = {path.path_id: self._to_tree_node(path) for path in paths}
         roots: list[PathTreeNode] = []
 
@@ -131,6 +145,19 @@ class PathService:
             self.storage_service.delete_directory_tree(stored_path.storage_path)
             raise
         self.db.refresh(path)
+        self.logger.info(
+            "目录创建完成",
+            extra={
+                "action": "create_path",
+                "target_type": "file_path",
+                "target_id": path.path_id,
+                "user_id": user_id,
+                "result": "success",
+                "path_id": path.path_id,
+                "is_hidden": path.is_hidden,
+                "client_ip": client_ip,
+            },
+        )
         return self._to_read(path)
 
     def move_path(
@@ -217,6 +244,7 @@ class PathService:
             else f"{new_full_path}{item.full_path.removeprefix(old_full_path)}"
             for item in subtree
         }
+        # full_path 和 storage_path 都是冗余字段；移动目录时必须整棵子树同步改写，避免后续检索和清理错位。
         new_storage_paths = {
             item.path_id: new_storage_path
             if item.path_id == path.path_id
@@ -277,6 +305,19 @@ class PathService:
             )
             raise
         self.db.refresh(path)
+        self.logger.info(
+            "目录移动完成",
+            extra={
+                "action": action_type,
+                "target_type": "file_path",
+                "target_id": path.path_id,
+                "user_id": user_id,
+                "result": "success",
+                "path_id": parent.path_id,
+                "count": len(subtree),
+                "client_ip": client_ip,
+            },
+        )
         return self._to_read(path)
 
     def update_path(
@@ -365,6 +406,18 @@ class PathService:
             self.db.rollback()
             raise ConflictError("目录更新冲突") from exc
         self.db.refresh(path)
+        self.logger.info(
+            "目录更新完成",
+            extra={
+                "action": action_type,
+                "target_type": "file_path",
+                "target_id": path.path_id,
+                "user_id": user_id,
+                "result": "success",
+                "is_hidden": path.is_hidden,
+                "client_ip": client_ip,
+            },
+        )
         return self._to_read(path)
 
     def delete_path(
@@ -439,6 +492,18 @@ class PathService:
         for file_info in files:
             self.storage_service.delete_object(file_info.storage_path)
         self.storage_service.delete_directory_tree(path.storage_path)
+        self.logger.info(
+            "目录删除完成",
+            extra={
+                "action": action_type,
+                "target_type": "file_path",
+                "target_id": path.path_id,
+                "user_id": user_id,
+                "result": "success",
+                "count": len(subtree),
+                "client_ip": client_ip,
+            },
+        )
 
     def _include_hidden(self, *, current_user: UserAccount | None) -> bool:
         """依据隐藏功能开关和当前会话状态决定是否返回隐藏目录。"""
@@ -531,6 +596,18 @@ class PathService:
             client_ip=client_ip,
         )
         self.db.commit()
+        self.logger.warning(
+            "目录操作失败",
+            extra={
+                "action": action_type,
+                "target_type": "file_path",
+                "target_id": path_id,
+                "user_id": user_id,
+                "result": "failed",
+                "reason": reason,
+                "client_ip": client_ip,
+            },
+        )
 
     def _to_tree_node(self, path: FilePath) -> PathTreeNode:
         """将目录模型转换为树节点响应。"""

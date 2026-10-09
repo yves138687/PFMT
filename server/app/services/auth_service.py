@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta
 
 import jwt
@@ -39,6 +40,7 @@ class AuthService:
         self.user_repository = UserRepository(db)
         self.session_repository = SessionRepository(db)
         self.audit_service = AuditService(db)
+        self.logger = logging.getLogger("pfmt.business")
 
     def login(
         self,
@@ -65,6 +67,18 @@ class AuthService:
                 client_ip=client_ip,
             )
             self.db.commit()
+            self.logger.warning(
+                "登录失败",
+                extra={
+                    "action": "login",
+                    "target_type": "user",
+                    "target_id": user.user_id if user else None,
+                    "user_id": user.user_id if user else None,
+                    "result": "failed",
+                    "reason": "invalid_credentials",
+                    "client_ip": client_ip,
+                },
+            )
             raise AuthenticationError("用户名或密码错误")
 
         self._clear_failed_login_attempts(rate_limit_key)
@@ -96,6 +110,17 @@ class AuthService:
         )
         self.db.commit()
         self.db.refresh(user)
+        self.logger.info(
+            "登录成功",
+            extra={
+                "action": "login",
+                "target_type": "user",
+                "target_id": user.user_id,
+                "user_id": user.user_id,
+                "result": "success",
+                "client_ip": client_ip,
+            },
+        )
         return TokenResponse(
             access_token=token,
             expires_at=expires_at,
@@ -153,6 +178,7 @@ class AuthService:
             raise AuthenticationError("登录态无效或已过期")
 
         if enabled:
+            # 开启隐藏内容前必须先完成二次验证；关闭时无需验证，降低误锁定风险。
             self._verify_hidden_content_password(
                 current_user=current_user,
                 password=password,
@@ -170,6 +196,18 @@ class AuthService:
             client_ip=client_ip,
         )
         self.db.commit()
+        self.logger.info(
+            "隐藏内容会话开关更新",
+            extra={
+                "action": "hidden_content",
+                "target_type": "session",
+                "target_id": session.session_id,
+                "user_id": current_user.user_id,
+                "result": "success",
+                "enabled": enabled,
+                "client_ip": client_ip,
+            },
+        )
         return enabled
 
     def set_hidden_content_password(
@@ -280,6 +318,17 @@ class AuthService:
             client_ip=client_ip,
         )
         self.db.commit()
+        self.logger.info(
+            "退出登录",
+            extra={
+                "action": "logout",
+                "target_type": "user",
+                "target_id": current_user.user_id,
+                "user_id": current_user.user_id,
+                "result": "success",
+                "client_ip": client_ip,
+            },
+        )
 
     def _verify_hidden_content_password(
         self,
@@ -297,6 +346,18 @@ class AuthService:
         if not expected_hash:
             required = SettingService(self.db).get_bool("hidden.verify_password_required", False)
             if required:
+                self.logger.warning(
+                    "隐藏内容验证被拒绝",
+                    extra={
+                        "action": "hidden_content",
+                        "target_type": "user",
+                        "target_id": current_user.user_id,
+                        "user_id": current_user.user_id,
+                        "result": "failed",
+                        "reason": "verify_password_not_configured",
+                        "client_ip": client_ip,
+                    },
+                )
                 raise PermissionDeniedError("请先在系统配置中设置隐藏内容二次验证码")
             return
 
@@ -319,6 +380,18 @@ class AuthService:
             client_ip=client_ip,
         )
         self.db.commit()
+        self.logger.warning(
+            "隐藏内容二次验证失败",
+            extra={
+                "action": "hidden_content",
+                "target_type": "user",
+                "target_id": current_user.user_id,
+                "user_id": current_user.user_id,
+                "result": "failed",
+                "reason": "invalid_password",
+                "client_ip": client_ip,
+            },
+        )
         raise PermissionDeniedError("二次验证码错误")
 
     @staticmethod
@@ -333,6 +406,10 @@ class AuthService:
         now = now_utc()
         locked_until = self._hidden_verify_locks.get(key)
         if locked_until is not None and locked_until > now:
+            self.logger.warning(
+                "隐藏内容二次验证触发限流",
+                extra={"action": "hidden_content", "result": "failed", "reason": "rate_limited"},
+            )
             raise TooManyRequestsError("二次验证码错误次数过多，请稍后再试")
         if locked_until is not None:
             self._hidden_verify_locks.pop(key, None)
@@ -369,6 +446,10 @@ class AuthService:
         now = now_utc()
         locked_until = self._login_locks.get(key)
         if locked_until is not None and locked_until > now:
+            self.logger.warning(
+                "登录触发限流",
+                extra={"action": "login", "result": "failed", "reason": "rate_limited"},
+            )
             raise TooManyRequestsError("登录失败次数过多，请稍后再试")
         if locked_until is not None:
             self._login_locks.pop(key, None)

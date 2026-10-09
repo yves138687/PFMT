@@ -55,7 +55,7 @@ from app.schemas.file import (
 from app.services.audit_service import AuditService
 from app.services.setting_service import SettingService
 from app.services.storage_service import ContentRange, StorageService, StoredObject
-from app.services.tag_suggestion_service import DEFAULT_SUGGESTION_LIMIT, TagSuggestionService
+from app.services.tag_suggestion_service import DEFAULT_SUGGESTION_LIMIT, MAX_SUGGESTION_LIMIT, TagSuggestionService
 from app.utils.file_type import (
     detect_document_format,
     detect_file_type,
@@ -1618,6 +1618,7 @@ class FileService:
         self,
         *,
         file_id: str,
+        limit: int = DEFAULT_SUGGESTION_LIMIT,
         current_user: UserAccount,
         client_ip: str | None,
     ) -> FileTagSuggestionResponse:
@@ -1651,7 +1652,7 @@ class FileService:
             content_chunks=self.storage_service.iter_content_chunks(file_info),
             document_format=document_format,
             existing_tags=existing_tags,
-            limit=DEFAULT_SUGGESTION_LIMIT,
+            limit=min(max(limit, 1), MAX_SUGGESTION_LIMIT),
         )
         self.audit_service.record(
             user_id=current_user.user_id,

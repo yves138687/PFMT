@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -29,6 +29,13 @@ const router = useRouter()
 const authStore = useAuthStore()
 const settingsStore = useSettingsStore()
 const searchKeyword = ref('')
+const brandClickCount = ref(0)
+let brandClickResetTimer: number | undefined
+let brandNavigateTimer: number | undefined
+
+const HIDDEN_ENTRY_CLICKS = 5
+const BRAND_CLICK_WINDOW_MS = 2000
+const BRAND_NAVIGATE_DELAY_MS = 350
 
 const pageTitle = computed(() => route.meta.title ?? '工作台')
 const displayName = computed(() => authStore.user?.display_name ?? authStore.user?.username ?? '单用户')
@@ -65,10 +72,22 @@ function submitSearch() {
   })
 }
 
-async function handleShowHiddenChange(value: string | number | boolean) {
-  const target = Boolean(value)
-  if (!target) {
-    await settingsStore.setShowHiddenContent(false)
+function clearTimer(timer: number | undefined) {
+  if (timer !== undefined) {
+    window.clearTimeout(timer)
+  }
+}
+
+async function closeHiddenContent() {
+  if (!settingsStore.showHiddenContent) {
+    return
+  }
+  await settingsStore.setShowHiddenContent(false)
+}
+
+async function toggleHiddenContent() {
+  if (settingsStore.showHiddenContent) {
+    await closeHiddenContent()
     return
   }
 
@@ -82,17 +101,45 @@ async function handleShowHiddenChange(value: string | number | boolean) {
   }
 
   try {
-    const { value: password } = await ElMessageBox.prompt('请输入隐藏内容二次验证码', '二次验证', {
+    const { value: password } = await ElMessageBox.prompt('请输入验证信息', '验证', {
       inputType: 'password',
-      inputPlaceholder: '请输入二次验证码',
-      confirmButtonText: '验证并显示',
+      inputPlaceholder: '请输入验证信息',
+      confirmButtonText: '确认',
       cancelButtonText: '取消',
       inputValidator: (input: string) => input.length >= 6 || '二次验证码至少 6 位'
     })
     await settingsStore.setShowHiddenContent(true, password)
   } catch {
-    // 取消输入或验证失败：开关保持关闭，失败信息由接口统一提示
+    // 取消输入或验证失败：保持当前关闭状态，失败信息由接口统一提示。
   }
+}
+
+function handleBrandClick() {
+  if (!settingsStore.hiddenFeatureEnabled) {
+    void router.push({ name: 'dashboard' })
+    return
+  }
+
+  clearTimer(brandNavigateTimer)
+  brandClickCount.value += 1
+  clearTimer(brandClickResetTimer)
+
+  if (brandClickCount.value >= HIDDEN_ENTRY_CLICKS) {
+    brandClickCount.value = 0
+    brandClickResetTimer = undefined
+    void toggleHiddenContent()
+    return
+  }
+
+  brandClickResetTimer = window.setTimeout(() => {
+    brandClickCount.value = 0
+    brandClickResetTimer = undefined
+  }, BRAND_CLICK_WINDOW_MS)
+  brandNavigateTimer = window.setTimeout(() => {
+    brandClickCount.value = 0
+    brandNavigateTimer = undefined
+    void router.push({ name: 'dashboard' })
+  }, BRAND_NAVIGATE_DELAY_MS)
 }
 
 function openUploadDialog() {
@@ -117,6 +164,12 @@ watch(
   },
   { immediate: true }
 )
+
+onBeforeUnmount(() => {
+  clearTimer(brandClickResetTimer)
+  clearTimer(brandNavigateTimer)
+})
+
 </script>
 
 <template>
@@ -129,7 +182,7 @@ watch(
         :aria-label="sidebarButtonLabel"
         @click="emit('toggleSidebar')"
       />
-      <RouterLink class="top-nav__brand" :to="{ name: 'dashboard' }">
+      <RouterLink class="top-nav__brand" :to="{ name: 'dashboard' }" @click.prevent="handleBrandClick">
         <span class="top-nav__mark">PF</span>
         <span>PFMT</span>
       </RouterLink>
@@ -151,25 +204,6 @@ watch(
           <el-icon><Search /></el-icon>
         </template>
       </el-input>
-
-      <div v-if="settingsStore.hiddenFeatureEnabled" class="top-nav__hidden-switch">
-        <span>显示隐藏</span>
-        <el-switch
-          :model-value="settingsStore.showHiddenContent"
-          aria-label="显示隐藏内容"
-          @change="handleShowHiddenChange"
-        />
-      </div>
-
-      <div v-if="settingsStore.hiddenFeatureEnabled" class="top-nav__mobile-hidden-switch">
-        <el-tooltip content="显示隐藏内容" placement="bottom">
-          <el-switch
-            :model-value="settingsStore.showHiddenContent"
-            aria-label="显示隐藏内容"
-            @change="handleShowHiddenChange"
-          />
-        </el-tooltip>
-      </div>
 
       <el-tooltip content="上传文件" placement="bottom">
         <el-button :icon="UploadFilled" circle @click="openUploadDialog" />
@@ -254,20 +288,6 @@ watch(
   width: 220px;
 }
 
-.top-nav__hidden-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--pfmt-text-muted);
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.top-nav__mobile-hidden-switch {
-  display: none;
-  align-items: center;
-}
-
 .top-nav__user {
   display: inline-flex;
   align-items: center;
@@ -309,13 +329,8 @@ watch(
   }
 
   .top-nav__breadcrumb,
-  .top-nav__search,
-  .top-nav__hidden-switch {
+  .top-nav__search {
     display: none;
-  }
-
-  .top-nav__mobile-hidden-switch {
-    display: inline-flex;
   }
 
   .top-nav__user strong {

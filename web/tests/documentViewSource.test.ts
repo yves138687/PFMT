@@ -44,6 +44,16 @@ describe('DocumentView source contract', () => {
     expect(source).not.toContain('await setEditorContentFromSource()\n    await refreshRenderedHtml()')
   })
 
+  it('renders only one chapter or paragraph group at a time in read mode', () => {
+    expect(source).toContain("import { buildReadSections } from '@/utils/documentReading'")
+    expect(source).toContain('const readSections = computed')
+    expect(source).toContain('const activeReadSection = computed')
+    expect(source).toContain('async function selectReadSection')
+    expect(source).toContain('one chapter/paragraph')
+    expect(source).toContain('上一节')
+    expect(source).toContain('下一节')
+  })
+
   it('warns before preparing rich editing for very large documents', () => {
     expect(source).toContain('const isLargeDocument = computed')
     expect(source).toContain('const requiresRichEditorConfirm = computed')

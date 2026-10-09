@@ -2,6 +2,7 @@ import { ElMessage } from 'element-plus'
 
 import type { ApiEnvelope, ApiErrorBody, QueryParams } from '@/types/api'
 import { clearAuthSnapshot, getAccessToken } from '@/utils/authStorage'
+import { clientLogger } from '@/utils/clientLogger'
 
 export class ApiError extends Error {
   status: number
@@ -28,6 +29,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '/api').replace(/\/$/
 let unauthorizedHandler: UnauthorizedHandler = null
 
 export function registerUnauthorizedHandler(handler: UnauthorizedHandler) {
+  // 注册全局 401 处理器，避免 API 层直接依赖 router 或 store。
   unauthorizedHandler = handler
 }
 
@@ -90,6 +92,7 @@ function normalizeData<T>(payload: unknown): T {
     const failedByCode = typeof envelope.code === 'number' && envelope.code >= 400
 
     if (failedBySuccess || failedByCode) {
+      // 兼容旧后端的 envelope 响应：HTTP 200 也可能通过 success/code 表达业务失败。
       throw new ApiError(envelope.message ?? '请求处理失败', envelope.code ?? 500, payload)
     }
 
@@ -108,6 +111,9 @@ function notifyError(message: string, skipErrorMessage?: boolean) {
 export async function request<T>(path: string, options: RequestOptions = {}) {
   const { body, query, skipAuth, skipErrorMessage, headers: initHeaders, ...init } = options
   const headers = new Headers(initHeaders)
+  const method = init.method ?? 'GET'
+  const url = buildUrl(path, query)
+  const startedAt = performance.now()
 
   let requestBody: BodyInit | undefined
   if (body instanceof FormData) {
@@ -124,13 +130,20 @@ export async function request<T>(path: string, options: RequestOptions = {}) {
 
   let response: Response
   try {
-    response = await fetch(buildUrl(path, query), {
+    clientLogger.debug('api_request_started', { method, path, skipAuth: Boolean(skipAuth), hasBody: body !== undefined })
+    response = await fetch(url, {
       ...init,
       headers,
       body: requestBody
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '网络请求失败'
+    clientLogger.error('api_request_network_failed', {
+      method,
+      path,
+      durationMs: Math.round(performance.now() - startedAt),
+      message
+    })
     notifyError(message, skipErrorMessage)
     throw new ApiError(message, 0, error)
   }
@@ -140,6 +153,12 @@ export async function request<T>(path: string, options: RequestOptions = {}) {
   if (response.status === 401) {
     // 401 表示登录态失效：清理本地 token，并交给路由层统一跳回登录页。
     clearAuthSnapshot()
+    clientLogger.warn('api_request_unauthorized', {
+      method,
+      path,
+      status: response.status,
+      requestId: response.headers.get('x-request-id')
+    })
     notifyError('登录已过期，请重新登录', skipErrorMessage)
     unauthorizedHandler?.()
     throw new ApiError('登录已过期，请重新登录', response.status, payload)
@@ -147,14 +166,30 @@ export async function request<T>(path: string, options: RequestOptions = {}) {
 
   if (!response.ok) {
     const message = getMessage(payload, `请求失败：${response.status}`)
+    clientLogger.warn('api_request_failed', {
+      method,
+      path,
+      status: response.status,
+      requestId: response.headers.get('x-request-id'),
+      message
+    })
     notifyError(message, skipErrorMessage)
     throw new ApiError(message, response.status, payload)
   }
 
   try {
-    return normalizeData<T>(payload)
+    const data = normalizeData<T>(payload)
+    clientLogger.debug('api_request_completed', {
+      method,
+      path,
+      status: response.status,
+      requestId: response.headers.get('x-request-id'),
+      durationMs: Math.round(performance.now() - startedAt)
+    })
+    return data
   } catch (error) {
     if (error instanceof ApiError) {
+      clientLogger.warn('api_envelope_failed', { method, path, status: error.status, message: error.message })
       notifyError(error.message, skipErrorMessage)
     }
     throw error
@@ -174,6 +209,9 @@ export async function requestBlob(path: string, options: RequestOptions = {}) {
 export async function requestBlobResponse(path: string, options: RequestOptions = {}): Promise<BlobResponse> {
   const { body: _body, query, skipAuth, skipErrorMessage, headers: initHeaders, ...init } = options
   const headers = new Headers(initHeaders)
+  const method = init.method ?? 'GET'
+  const url = buildUrl(path, query)
+  const startedAt = performance.now()
   const token = getAccessToken()
   if (token && !skipAuth) {
     headers.set('Authorization', `Bearer ${token}`)
@@ -189,19 +227,32 @@ export async function requestBlobResponse(path: string, options: RequestOptions 
 
   let response: Response
   try {
-    response = await fetch(buildUrl(path, query), {
+    clientLogger.debug('api_blob_request_started', { method, path, skipAuth: Boolean(skipAuth), hasBody: _body !== undefined })
+    response = await fetch(url, {
       ...init,
       headers,
       body: requestBody
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : '网络请求失败'
+    clientLogger.error('api_blob_request_network_failed', {
+      method,
+      path,
+      durationMs: Math.round(performance.now() - startedAt),
+      message
+    })
     notifyError(message, skipErrorMessage)
     throw new ApiError(message, 0, error)
   }
 
   if (response.status === 401) {
     clearAuthSnapshot()
+    clientLogger.warn('api_blob_request_unauthorized', {
+      method,
+      path,
+      status: response.status,
+      requestId: response.headers.get('x-request-id')
+    })
     notifyError('登录已过期，请重新登录', skipErrorMessage)
     unauthorizedHandler?.()
     throw new ApiError('登录已过期，请重新登录', response.status)
@@ -210,10 +261,24 @@ export async function requestBlobResponse(path: string, options: RequestOptions 
   if (!response.ok) {
     const payload = await parseBody(response)
     const message = getMessage(payload, `请求失败：${response.status}`)
+    clientLogger.warn('api_blob_request_failed', {
+      method,
+      path,
+      status: response.status,
+      requestId: response.headers.get('x-request-id'),
+      message
+    })
     notifyError(message, skipErrorMessage)
     throw new ApiError(message, response.status, payload)
   }
 
+  clientLogger.debug('api_blob_request_completed', {
+    method,
+    path,
+    status: response.status,
+    requestId: response.headers.get('x-request-id'),
+    durationMs: Math.round(performance.now() - startedAt)
+  })
   return {
     blob: await response.blob(),
     headers: response.headers

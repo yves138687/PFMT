@@ -111,15 +111,13 @@ export function applyOutlineIdsToContainer(container: HTMLElement | null) {
 }
 
 function extractHtmlHeadings(source: string): HeadingSeed[] {
-  if (!source.trim() || typeof document === 'undefined') {
+  if (!source.trim()) {
     return []
   }
-
-  const template = document.createElement('template')
-  template.innerHTML = source
-  return Array.from(template.content.querySelectorAll<HTMLHeadingElement>(headingSelector)).map((heading) => ({
-    level: Number(heading.tagName.slice(1)) as DocumentOutlineItem['level'],
-    title: normalizeTitle(heading.textContent ?? '')
+  return Array.from(source.matchAll(/<h([1-6])(?:\s[^>]*)?>([\s\S]*?)<\/h\1>/gi)).map((match) => ({
+    level: Number(match[1]) as DocumentOutlineItem['level'],
+    sourceLine: source.slice(0, match.index).split(/\r?\n/).length - 1,
+    title: stripHtml(match[2])
   }))
 }
 

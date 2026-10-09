@@ -49,6 +49,7 @@ import {
 } from '@/utils/documentOutline'
 import { saveBlobResponse } from '@/utils/download'
 import { extractDocumentImageFileId } from '@/utils/documentMedia'
+import { buildReadSections } from '@/utils/documentReading'
 import { getEmbedToken, resolveEmbedUrls, stripEmbedTokens } from '@/utils/embedFiles'
 import { renderMarkdown } from '@/utils/markdown'
 import { beautifyText } from '@/utils/textBeautify'
@@ -68,6 +69,7 @@ const documentContent = ref<DocumentContent | null>(null)
 const sourceContent = ref('')
 const mode = ref<DocumentMode>('read')
 const readFontSize = ref(DEFAULT_READ_FONT_SIZE)
+const readSectionIndex = ref(0)
 const loading = ref(false)
 const saving = ref(false)
 const converting = ref(false)
@@ -133,6 +135,15 @@ const outlineItems = computed(() => {
   return buildHtmlOutline(safeRenderedHtml.value)
 })
 const showOutline = computed(() => documentContent.value?.document_format !== 'plain_text')
+const readSections = computed(() => {
+  const currentDocument = documentContent.value
+  return currentDocument ? buildReadSections(sourceContent.value, currentDocument.document_format) : []
+})
+const activeReadSection = computed(() => readSections.value[readSectionIndex.value] ?? readSections.value[0])
+const readSectionLabel = computed(() => {
+  const section = activeReadSection.value
+  return section ? `${readSectionIndex.value + 1} / ${readSections.value.length} · ${section.title}` : ''
+})
 const isLargeDocument = computed(() => (documentContent.value?.size_bytes ?? 0) >= LARGE_DOCUMENT_SIZE_BYTES)
 const requiresRichEditorConfirm = computed(() => (documentContent.value?.size_bytes ?? 0) >= RICH_EDITOR_CONFIRM_SIZE_BYTES)
 const largeDocumentHint = computed(() => {
@@ -394,22 +405,25 @@ async function refreshRenderedHtml() {
     disconnectRenderedEmbedObserver()
     return
   }
-  const content = sourceContent.value
+  // Read mode intentionally only transforms and mounts one chapter/paragraph
+  // group. Edit/source modes continue to work against the complete document.
+  const content = activeReadSection.value?.content ?? sourceContent.value
+  const canUseCachedRender = readSections.value.length === 1 && content === currentDocument.content
   if (currentDocument.document_format === 'markdown') {
-    const rendered = content === currentDocument.content && currentDocument.rendered_html
+    const rendered = canUseCachedRender && currentDocument.rendered_html
       ? currentDocument.rendered_html
       : renderMarkdown(content)
     await renderReadableHtml(rendered)
     return
   }
   if (currentDocument.document_format === 'html') {
-    const rendered = content === currentDocument.content && currentDocument.rendered_html
+    const rendered = canUseCachedRender && currentDocument.rendered_html
       ? currentDocument.rendered_html
       : content
     await renderReadableHtml(DOMPurify.sanitize(rendered))
     return
   }
-  const rendered = content === currentDocument.content && currentDocument.rendered_html
+  const rendered = canUseCachedRender && currentDocument.rendered_html
     ? currentDocument.rendered_html
     : renderPlainTextHtml(content)
   await renderReadableHtml(DOMPurify.sanitize(rendered))
@@ -435,6 +449,7 @@ async function loadDocument() {
     }
     documentContent.value = response
     sourceContent.value = response.content
+    readSectionIndex.value = 0
     activeOutlineId.value = ''
     mode.value = nextMode
     editorContentRequestId += 1
@@ -574,7 +589,17 @@ function applyEditorOutlineIds() {
   applyOutlineIdsToContainer(canvasRef.value?.querySelector('.ProseMirror') ?? null)
 }
 
-function scrollToOutline(id: string, index = -1) {
+async function selectReadSection(index: number) {
+  const nextIndex = Math.min(Math.max(index, 0), Math.max(readSections.value.length - 1, 0))
+  if (nextIndex === readSectionIndex.value) {
+    return
+  }
+  readSectionIndex.value = nextIndex
+  await refreshRenderedHtml()
+  canvasRef.value?.scrollTo({ top: 0 })
+}
+
+async function scrollToOutline(id: string, index = -1) {
   const container = canvasRef.value
   if (!container) {
     return
@@ -583,6 +608,19 @@ function scrollToOutline(id: string, index = -1) {
   if (mode.value === 'source') {
     scrollSourceToOutline(id)
     return
+  }
+
+  if (mode.value === 'read') {
+    const item = outlineItems.value[index] ?? outlineItems.value.find((outlineItem) => outlineItem.id === id)
+    if (item) {
+      const matchedSection = item.sourceLine === undefined
+        ? readSections.value.findIndex((section) => section.title === item.title)
+        : readSections.value.reduce((matched, section, sectionIndex) => (
+          section.sourceLine <= item.sourceLine! ? sectionIndex : matched
+        ), 0)
+      await selectReadSection(matchedSection < 0 ? 0 : matchedSection)
+      await nextTick()
+    }
   }
 
   const target = findOutlineTarget(container, id, index)
@@ -595,7 +633,7 @@ function scrollToOutline(id: string, index = -1) {
 }
 
 function navigateOutline(id: string, index = -1) {
-  scrollToOutline(id, index)
+  void scrollToOutline(id, index)
   outlineDrawerVisible.value = false
 }
 
@@ -1047,6 +1085,9 @@ watch(outlineItems, (items) => {
 })
 
 watch(sourceContent, () => {
+  if (readSectionIndex.value >= readSections.value.length) {
+    readSectionIndex.value = 0
+  }
   if (mode.value === 'source') {
     void nextTick(resizeSourceTextarea)
   }
@@ -1097,6 +1138,25 @@ onBeforeUnmount(() => {
           <el-button size="small" title="增大阅读字号" :disabled="readFontSize >= MAX_READ_FONT_SIZE" @click="increaseReadFontSize">
             A+
           </el-button>
+        </div>
+        <div v-if="mode === 'read' && readSections.length > 1" class="document-view__read-section-controls">
+          <el-button size="small" :disabled="readSectionIndex === 0" @click="selectReadSection(readSectionIndex - 1)">上一节</el-button>
+          <el-select
+            :model-value="readSectionIndex"
+            size="small"
+            class="document-view__read-section-select"
+            aria-label="阅读章节"
+            @update:model-value="selectReadSection(Number($event))"
+          >
+            <el-option
+              v-for="(section, index) in readSections"
+              :key="`${section.sourceLine}-${index}`"
+              :label="`${index + 1}. ${section.title}`"
+              :value="index"
+            />
+          </el-select>
+          <span class="document-view__read-section-label">{{ readSectionLabel }}</span>
+          <el-button size="small" :disabled="readSectionIndex >= readSections.length - 1" @click="selectReadSection(readSectionIndex + 1)">下一节</el-button>
         </div>
       </div>
       <div v-loading="loading" class="panel-body document-view__body">
@@ -1406,6 +1466,25 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   margin-left: auto;
+}
+
+.document-view__read-section-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.document-view__read-section-select {
+  width: min(220px, 30vw);
+}
+
+.document-view__read-section-label {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--pfmt-text-secondary);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .document-view__read-font-size {

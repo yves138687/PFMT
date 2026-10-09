@@ -5,6 +5,7 @@ import { authApi } from '@/api/auth'
 import { registerUnauthorizedHandler } from '@/api/http'
 import type { LoginRequest, UserProfile } from '@/types/auth'
 import { clearAuthSnapshot, getAccessToken, getStoredUser, setAuthSnapshot } from '@/utils/authStorage'
+import { clientLogger } from '@/utils/clientLogger'
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -23,6 +24,10 @@ export const useAuthStore = defineStore('auth', {
         this.token = response.access_token
         this.user = response.user
         setAuthSnapshot(response.access_token, response.user)
+        clientLogger.info('auth_login_succeeded', { userId: response.user.user_id })
+      } catch (error) {
+        clientLogger.warn('auth_login_failed', { message: error instanceof Error ? error.message : 'unknown_error' })
+        throw error
       } finally {
         this.loading = false
       }
@@ -35,6 +40,7 @@ export const useAuthStore = defineStore('auth', {
       const user = await authApi.getCurrentUser()
       this.user = user
       setAuthSnapshot(this.token, user)
+      clientLogger.debug('auth_current_user_loaded', { userId: user.user_id })
       return user
     },
     async logout() {
@@ -43,6 +49,7 @@ export const useAuthStore = defineStore('auth', {
           await authApi.logout()
         }
       } finally {
+        clientLogger.info('auth_logout_completed', { userId: this.user?.user_id })
         this.clearAuth()
       }
     },
@@ -50,6 +57,7 @@ export const useAuthStore = defineStore('auth', {
       this.token = null
       this.user = null
       clearAuthSnapshot()
+      clientLogger.debug('auth_snapshot_cleared')
     },
     setUser(user: UserProfile) {
       this.user = user
@@ -67,6 +75,7 @@ export function bindAuthUnauthorizedHandler(router: Router) {
 
     const currentPath = router.currentRoute.value.fullPath
     if (router.currentRoute.value.name !== 'login') {
+      clientLogger.warn('auth_unauthorized_redirect', { from: currentPath })
       void router.push({
         name: 'login',
         query: {

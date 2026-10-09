@@ -1,7 +1,7 @@
 import { fileURLToPath, URL } from 'node:url'
 
 import vue from '@vitejs/plugin-vue'
-import { defineConfig, loadEnv, type UserConfig } from 'vite'
+import { defineConfig, loadEnv, type Plugin, type UserConfig } from 'vite'
 
 type ViteConfigWithTest = UserConfig & {
   test: {
@@ -9,6 +9,28 @@ type ViteConfigWithTest = UserConfig & {
     globals: boolean
     setupFiles: string
     css: boolean
+  }
+}
+
+/**
+ * A browser (or an automated scanner) can request Linux pseudo-files directly.
+ * On Windows these paths do not exist, but allowing them to reach Vite's
+ * transform middleware produces an ENOENT overlay instead of a normal 404.
+ */
+function blockLinuxPseudoFileRequests(): Plugin {
+  return {
+    name: 'pfmt:block-linux-pseudo-file-requests',
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const pathname = (request.url ?? '').split('?', 1)[0]
+        if (!/^\/(?:proc|sys|dev)(?:\/|$)/i.test(pathname)) {
+          next()
+          return
+        }
+        response.statusCode = 404
+        response.end('Not Found')
+      })
+    }
   }
 }
 
@@ -22,7 +44,7 @@ export default defineConfig(({ mode }) => {
     .filter(Boolean)
 
   return {
-    plugins: [vue()],
+    plugins: [blockLinuxPseudoFileRequests(), vue()],
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url))

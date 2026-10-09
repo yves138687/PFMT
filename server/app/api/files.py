@@ -476,6 +476,7 @@ def update_file_tags(
 @router.post("/{file_id}/tag-suggestions", response_model=FileTagSuggestionResponse)
 def suggest_file_tags(
     file_id: str,
+    limit: int = Query(default=80, ge=1, le=80),
     current_user: UserAccount = Depends(get_current_user),
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
@@ -485,6 +486,7 @@ def suggest_file_tags(
 
     return FileService(db, settings).suggest_file_tags(
         file_id=file_id,
+        limit=limit,
         current_user=current_user,
         client_ip=client_ip,
     )

@@ -72,8 +72,16 @@ export const filesApi = {
       }
     )
   },
-  suggestFileTags(fileId: string) {
-    return http.post<FileTagSuggestionResponse>(`/files/${encodeURIComponent(fileId)}/tag-suggestions`)
+  suggestFileTags(fileId: string, limit = 80) {
+    return http.post<FileTagSuggestionResponse>(
+      `/files/${encodeURIComponent(fileId)}/tag-suggestions`,
+      undefined,
+      {
+        query: {
+          limit
+        }
+      }
+    )
   },
   moveFile(fileId: string, pathId: string) {
     return http.patch<FileDetail>(

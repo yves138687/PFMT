@@ -15,7 +15,8 @@ from app.models.file import FileTag
 
 TagSuggestionSource = Literal["existing_tag_match", "keyword_weight"]
 
-DEFAULT_SUGGESTION_LIMIT = 15
+DEFAULT_SUGGESTION_LIMIT = 80
+MAX_SUGGESTION_LIMIT = 80
 PROCESS_TEXT_CHARS = 16 * 1024
 MIN_TAIL_CHARS = 128
 DEFAULT_IDF = 5.0

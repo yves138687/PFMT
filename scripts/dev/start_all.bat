@@ -84,6 +84,6 @@ if "%START_FRPC%"=="1" (
 )
 echo Backend:  http://127.0.0.1:8000
 echo Frontend local: http://127.0.0.1:5173
-if "%START_FRPC%"=="1" echo Public dev: see VITE_PUBLIC_DEV_HOST and FRP/Nginx configuration.
+if "%START_FRPC%"=="1" echo Public dev: https://wiki.mapleleaf.fun
 echo Close those windows to stop the services.
 exit /b 0

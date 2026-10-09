@@ -6,6 +6,9 @@ import { filesApi, tagsApi } from '@/api/files'
 import type { FileDetail, FileInfo, FileTag, FileTagSuggestionItem, FileType } from '@/types/files'
 import { formatDateTime, formatFileSize } from '@/utils/format'
 
+const TAG_SUGGESTION_LIMIT = 80
+const TAG_SUGGESTION_PAGE_SIZE = 10
+
 const props = defineProps<{
   modelValue: boolean
   fileId?: string
@@ -30,6 +33,7 @@ const tagDraft = ref<string[]>([])
 const tagSuggestions = ref<FileTagSuggestionItem[]>([])
 const tagSuggestionLoading = ref(false)
 const tagSuggestionLoaded = ref(false)
+const tagSuggestionPage = ref(0)
 
 const visible = computed({
   get: () => props.modelValue,
@@ -41,6 +45,13 @@ const visibleTagSuggestions = computed(() => {
   const selected = new Set(tagDraft.value.map((tagName) => tagName.toLowerCase()))
   return tagSuggestions.value.filter((item) => !selected.has(item.tag_name.toLowerCase()))
 })
+const tagSuggestionPageCount = computed(() => Math.max(1, Math.ceil(visibleTagSuggestions.value.length / TAG_SUGGESTION_PAGE_SIZE)))
+const currentTagSuggestionPage = computed(() => Math.min(tagSuggestionPage.value, tagSuggestionPageCount.value - 1))
+const pagedTagSuggestions = computed(() => {
+  const start = currentTagSuggestionPage.value * TAG_SUGGESTION_PAGE_SIZE
+  return visibleTagSuggestions.value.slice(start, start + TAG_SUGGESTION_PAGE_SIZE)
+})
+const canSwitchTagSuggestions = computed(() => visibleTagSuggestions.value.length > TAG_SUGGESTION_PAGE_SIZE)
 
 const fileTypeLabels: Record<FileType, string> = {
   text: '文本',
@@ -70,6 +81,7 @@ function syncDraft(file: FileDetail | FileInfo | null) {
 function resetTagSuggestions() {
   tagSuggestions.value = []
   tagSuggestionLoaded.value = false
+  tagSuggestionPage.value = 0
 }
 
 async function loadDetail() {
@@ -112,8 +124,9 @@ async function generateTagSuggestions() {
 
   tagSuggestionLoading.value = true
   tagSuggestionLoaded.value = true
+  tagSuggestionPage.value = 0
   try {
-    const response = await filesApi.suggestFileTags(file.file_id)
+    const response = await filesApi.suggestFileTags(file.file_id, TAG_SUGGESTION_LIMIT)
     tagSuggestions.value = response.items
     if (response.items.length === 0) {
       ElMessage.info('未找到合适的标签建议')
@@ -121,6 +134,13 @@ async function generateTagSuggestions() {
   } finally {
     tagSuggestionLoading.value = false
   }
+}
+
+function switchTagSuggestionBatch() {
+  if (!canSwitchTagSuggestions.value) {
+    return
+  }
+  tagSuggestionPage.value = (currentTagSuggestionPage.value + 1) % tagSuggestionPageCount.value
 }
 
 async function saveMetadata() {
@@ -233,7 +253,15 @@ watch(
                 :disabled="!displayFile"
                 @click="generateTagSuggestions"
               >
-                生成建议
+                {{ tagSuggestionLoaded ? '重新生成' : '生成建议' }}
+              </el-button>
+              <el-button
+                v-if="tagSuggestionLoaded"
+                size="small"
+                :disabled="tagSuggestionLoading || !canSwitchTagSuggestions"
+                @click="switchTagSuggestionBatch"
+              >
+                换一批
               </el-button>
             </div>
             <div
@@ -242,7 +270,7 @@ watch(
               class="file-properties-dialog__suggestions"
             >
               <el-tag
-                v-for="item in visibleTagSuggestions"
+                v-for="item in pagedTagSuggestions"
                 :key="`${item.source}:${item.tag_name}`"
                 class="file-properties-dialog__suggestion"
                 :type="item.source === 'existing_tag_match' ? 'success' : 'info'"

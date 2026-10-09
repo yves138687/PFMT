@@ -23,10 +23,14 @@ describe('MainLayout mobile source contract', () => {
     expect(directoryTreeSource).toContain('function openSettings')
   })
 
-  it('keeps a mobile entry for toggling hidden content', () => {
-    expect(topNavigationSource).toContain('top-nav__mobile-hidden-switch')
-    expect(topNavigationSource).toContain('handleShowHiddenChange')
-    expect(topNavigationSource).toContain('显示隐藏内容')
+  it('uses a discreet brand gesture for toggling hidden content on all devices', () => {
+    expect(topNavigationSource).toContain('HIDDEN_ENTRY_CLICKS = 5')
+    expect(topNavigationSource).toContain('@click.prevent="handleBrandClick"')
+    expect(topNavigationSource).toContain('toggleHiddenContent')
+    expect(topNavigationSource).not.toContain('top-nav__mobile-hidden-switch')
+    expect(topNavigationSource).not.toContain('显示隐藏内容')
+    expect(topNavigationSource).not.toContain("addEventListener('blur'")
+    expect(topNavigationSource).not.toContain('HIDDEN_AUTO_CLOSE_MS')
     expect(topNavigationSource).toContain('.top-nav__user strong')
     expect(topNavigationSource).toContain('display: none')
   })

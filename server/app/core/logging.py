@@ -37,6 +37,19 @@ class JsonFormatter(logging.Formatter):
             "target_id",
             "result",
             "client_ip",
+            "user_id",
+            "reason",
+            "count",
+            "path_id",
+            "file_id",
+            "file_type",
+            "size_bytes",
+            "provider_id",
+            "model_name",
+            "task_type",
+            "show_hidden",
+            "is_hidden",
+            "enabled",
         ):
             value = getattr(record, key, None)
             if value is not None:
