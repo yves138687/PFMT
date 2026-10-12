@@ -107,6 +107,13 @@ describe('FolderView source contract', () => {
     expect(source).toContain("name: 'document'")
   })
 
+  it('paginates files with route query state', () => {
+    expect(source).toContain('el-pagination')
+    expect(source).toContain('pagedFiles')
+    expect(source).toContain('page_size')
+    expect(source).toContain('updatePagination')
+  })
+
   it('creates blank documents from the current folder', () => {
     expect(source).toContain('@click="openCreateDocument"')
     expect(source).toContain('createDocumentVisible')

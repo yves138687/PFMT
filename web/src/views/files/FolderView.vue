@@ -41,6 +41,9 @@ type FileViewMode = 'list' | 'grid'
 type FileActionCommand = 'export' | 'properties' | 'toggle-hidden' | 'delete'
 type PathActionCommand = 'create-folder' | 'create-document' | 'edit-path' | 'move-path' | 'delete-path'
 
+const DEFAULT_PAGE_SIZE = 50
+const PAGE_SIZE_OPTIONS = [20, 50, 100]
+
 interface PathOption {
   label: string
   value: string
@@ -186,6 +189,17 @@ const viewModeOptions = [
   { label: '列表', value: 'list' },
   { label: '图标', value: 'grid' }
 ]
+function readPaginationQuery(value: unknown, fallback: number, allowedValues?: number[]) {
+  const rawValue = Array.isArray(value) ? value[0] : value
+  const parsed = typeof rawValue === 'string' ? Number.parseInt(rawValue, 10) : Number.NaN
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+    return fallback
+  }
+  return allowedValues && !allowedValues.includes(parsed) ? fallback : parsed
+}
+
+const requestedPage = computed(() => readPaginationQuery(route.query.page, 1))
+const pageSize = computed(() => readPaginationQuery(route.query.page_size, DEFAULT_PAGE_SIZE, PAGE_SIZE_OPTIONS))
 const filteredFiles = computed(() => {
   const keyword = fileKeyword.value.trim().toLowerCase()
   return files.value.filter((file) => {
@@ -199,6 +213,12 @@ const filteredFiles = computed(() => {
     const matchesType = fileTypeFilter.value.length === 0 || fileTypeFilter.value.includes(file.file_type)
     return matchesKeyword && matchesTags && matchesType
   })
+})
+const pageCount = computed(() => Math.max(1, Math.ceil(filteredFiles.value.length / pageSize.value)))
+const currentPage = computed(() => Math.min(requestedPage.value, pageCount.value))
+const pagedFiles = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredFiles.value.slice(start, start + pageSize.value)
 })
 const selectedFileIds = computed(() => new Set(selectedFiles.value.map((file) => file.file_id)))
 const imageFiles = computed(() => files.value.filter((file) => file.file_type === 'image'))
@@ -335,6 +355,28 @@ function toggleGridFileSelection(file: FileInfo, selected: boolean) {
   selectedFiles.value = selectedFiles.value.filter((item) => item.file_id !== file.file_id)
 }
 
+function updatePagination(page: number, size = pageSize.value, replace = false) {
+  const nextPage = Math.max(1, Math.min(page, Math.max(1, Math.ceil(filteredFiles.value.length / size))))
+  const target = {
+    name: 'folder' as const,
+    params: { pathId: currentPathId.value },
+    query: {
+      ...route.query,
+      page: String(nextPage),
+      page_size: String(size)
+    }
+  }
+  void (replace ? router.replace(target) : router.push(target))
+}
+
+function handlePageChange(page: number) {
+  updatePagination(page)
+}
+
+function handlePageSizeChange(size: number) {
+  updatePagination(1, size)
+}
+
 async function syncTableSelection() {
   if (viewMode.value !== 'list' || !fileTableRef.value) {
     return
@@ -342,7 +384,7 @@ async function syncTableSelection() {
   syncingTableSelection.value = true
   try {
     fileTableRef.value.clearSelection()
-    filteredFiles.value.forEach((file) => {
+    pagedFiles.value.forEach((file) => {
       if (selectedFileIds.value.has(file.file_id)) {
         fileTableRef.value?.toggleRowSelection(file, true)
       }
@@ -868,7 +910,11 @@ function handleSelectionChange(selection: FileInfo[]) {
   if (syncingTableSelection.value) {
     return
   }
-  selectedFiles.value = selection
+  const currentPageFileIds = new Set(pagedFiles.value.map((file) => file.file_id))
+  const selectedById = new Map(selectedFiles.value.map((file) => [file.file_id, file]))
+  currentPageFileIds.forEach((fileId) => selectedById.delete(fileId))
+  selection.forEach((file) => selectedById.set(file.file_id, file))
+  selectedFiles.value = Array.from(selectedById.values())
 }
 
 async function exportSelectedFiles() {
@@ -1178,11 +1224,21 @@ async function loadFiles() {
 
 watch(
   [currentPathId, () => settingsStore.showHiddenContent],
-  () => {
+  ([pathId], previousValues) => {
+    const previousPathId = previousValues?.[0]
+    if (previousPathId && pathId !== previousPathId && requestedPage.value !== 1) {
+      updatePagination(1, pageSize.value, true)
+    }
     void loadFiles()
   },
   { immediate: true }
 )
+
+watch([requestedPage, pageCount], () => {
+  if (requestedPage.value !== currentPage.value) {
+    updatePagination(currentPage.value, pageSize.value, true)
+  }
+})
 
 watch(
   () => route.query.upload,
@@ -1205,7 +1261,17 @@ watch(
 )
 
 watch(
-  [viewMode, filteredFiles],
+  [fileKeyword, tagFilter, fileTypeFilter],
+  () => {
+    if (requestedPage.value !== 1) {
+      updatePagination(1, pageSize.value, true)
+    }
+  },
+  { deep: true }
+)
+
+watch(
+  [viewMode, pagedFiles],
   () => {
     void nextTick(syncTableSelection)
   },
@@ -1340,7 +1406,7 @@ onBeforeUnmount(() => {
         <el-table
           v-if="viewMode === 'list' && !isMobileViewport"
           ref="fileTableRef"
-          :data="filteredFiles"
+          :data="pagedFiles"
           class="folder-view__table"
           border
           row-key="file_id"
@@ -1397,9 +1463,9 @@ onBeforeUnmount(() => {
             </template>
           </el-table-column>
         </el-table>
-        <div v-else-if="viewMode === 'list' && filteredFiles.length" class="folder-view__mobile-list" aria-label="手机端文件列表">
+        <div v-else-if="viewMode === 'list' && pagedFiles.length" class="folder-view__mobile-list" aria-label="手机端文件列表">
           <article
-            v-for="file in filteredFiles"
+            v-for="file in pagedFiles"
             :key="file.file_id"
             class="file-row"
             :class="{ 'file-row--selected': isFileSelected(file) }"
@@ -1436,9 +1502,9 @@ onBeforeUnmount(() => {
             />
           </article>
         </div>
-        <div v-else-if="filteredFiles.length" class="folder-view__grid" aria-label="图标视图文件列表">
+        <div v-else-if="pagedFiles.length" class="folder-view__grid" aria-label="图标视图文件列表">
           <article
-            v-for="file in filteredFiles"
+            v-for="file in pagedFiles"
             :key="file.file_id"
             class="file-card"
             :class="{ 'file-card--selected': isFileSelected(file) }"
@@ -1494,6 +1560,17 @@ onBeforeUnmount(() => {
           </article>
         </div>
         <el-empty v-else description="当前目录暂无文件" />
+      </div>
+      <div v-if="filteredFiles.length" class="folder-view__pagination">
+        <el-pagination
+          :current-page="currentPage"
+          :page-size="pageSize"
+          :page-sizes="PAGE_SIZE_OPTIONS"
+          :total="filteredFiles.length"
+          :layout="isMobileViewport ? 'prev, pager, next' : 'total, sizes, prev, pager, next, jumper'"
+          @update:current-page="handlePageChange"
+          @update:page-size="handlePageSizeChange"
+        />
       </div>
     </section>
 
@@ -1965,6 +2042,13 @@ onBeforeUnmount(() => {
   vertical-align: middle;
 }
 
+.folder-view__pagination {
+  display: flex;
+  justify-content: flex-end;
+  padding: 14px 18px;
+  border-top: 1px solid var(--pfmt-border-soft);
+}
+
 .folder-view__file-name {
   display: grid;
   width: 100%;
@@ -2300,6 +2384,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 820px) {
+  .folder-view__pagination {
+    justify-content: center;
+    padding: 12px;
+  }
+
   .folder-view__actions {
     align-items: center;
     justify-content: flex-start;
