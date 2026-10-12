@@ -207,6 +207,8 @@ class DocumentReadSection(BaseModel):
 
     title: str
     source_line: int
+    level: int = 1
+    detected_by: str = "paragraph_fallback"
 
 
 class DocumentReadResponse(BaseModel):

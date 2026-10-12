@@ -662,7 +662,15 @@ class FileService:
                     if read_section is not None or file_info.size_bytes < READ_RENDERED_HTML_MAX_BYTES
                     else None
                 ),
-                read_sections=[DocumentReadSection(title=section.title, source_line=section.source_line) for section in sections] or None,
+                read_sections=[
+                    DocumentReadSection(
+                        title=section.title,
+                        source_line=section.source_line,
+                        level=section.level,
+                        detected_by=section.detected_by,
+                    )
+                    for section in sections
+                ] or None,
                 active_section_index=(min(read_section, len(sections) - 1) if read_section is not None else None),
             )
         except Exception:

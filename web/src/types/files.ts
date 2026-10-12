@@ -166,6 +166,8 @@ export interface DocumentContent {
   read_sections?: Array<{
     title: string
     source_line: number
+    level: number
+    detected_by: string
   }> | null
   active_section_index?: number | null
 }

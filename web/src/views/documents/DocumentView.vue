@@ -139,7 +139,7 @@ const outlineItems = computed(() => {
     return currentDocument.read_sections.map((section, index) => ({
       id: `read-section-${index}`,
       title: section.title,
-      level: 1 as const,
+      level: Math.min(Math.max(section.level, 1), 6) as 1 | 2 | 3 | 4 | 5 | 6,
       sourceLine: section.source_line
     }))
   }
@@ -168,6 +168,16 @@ const activeReadSection = computed(() => readSections.value[readSectionIndex.val
 const readSectionLabel = computed(() => {
   const section = activeReadSection.value
   return section ? `${readSectionIndex.value + 1} / ${readSections.value.length} · ${section.title}` : ''
+})
+const readDetectionText = computed(() => {
+  const detectedBy = documentContent.value?.read_sections?.[0]?.detected_by
+  const labels: Record<string, string> = {
+    markdown: '原生标题',
+    html: '原生标题',
+    pattern: '自动识别',
+    paragraph_fallback: '按段落分组'
+  }
+  return labels[detectedBy ?? ''] ?? '自动识别'
 })
 const isLargeDocument = computed(() => (documentContent.value?.size_bytes ?? 0) >= LARGE_DOCUMENT_SIZE_BYTES)
 const requiresRichEditorConfirm = computed(() => (documentContent.value?.size_bytes ?? 0) >= RICH_EDITOR_CONFIRM_SIZE_BYTES)
@@ -1191,6 +1201,17 @@ onBeforeUnmount(() => {
             @click="setMode('edit')"
           >
             编辑文档
+          </el-button>
+          <el-button
+            v-if="mode === 'read'"
+            size="small"
+            text
+            :icon="Refresh"
+            :loading="sectionLoading"
+            title="按当前规则重新识别章节"
+            @click="loadDocument(0)"
+          >
+            {{ readDetectionText }}
           </el-button>
           <el-button
             v-else-if="mode === 'edit' && !showAiAssistant"
