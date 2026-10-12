@@ -274,6 +274,7 @@ class DocumentMergeRequest(BaseModel):
     file_ids: list[str] = Field(min_length=2, max_length=50)
     target_format: DocumentFormat = "markdown"
     target_name: str | None = Field(default=None, min_length=1, max_length=512)
+    delete_source_files: bool = False
 
     @field_validator("file_ids")
     @classmethod

@@ -941,6 +941,7 @@ class FileService:
             target_name = f"{Path(target_name).stem}{expected_ext}"
 
         merged_file: FileInfo | None = None
+        source_storage_paths: list[str] = []
         try:
             merged_file = self._create_generated_document_file(
                 path_id=parent_path.path_id,
@@ -949,6 +950,14 @@ class FileService:
                 content=merged_content,
                 current_user=current_user,
             )
+            if payload.delete_source_files:
+                source_file_ids: set[str] = set()
+                for file_info, _source_format, _content in source_files:
+                    if file_info.file_id in source_file_ids:
+                        continue
+                    source_file_ids.add(file_info.file_id)
+                    source_storage_paths.append(file_info.storage_path)
+                    self.repository.soft_delete(file_info, user_id=current_user.user_id)
             self.audit_service.record(
                 user_id=current_user.user_id,
                 action_type="merge_documents",
@@ -959,12 +968,12 @@ class FileService:
                     "source_file_ids": payload.file_ids,
                     "target_format": payload.target_format,
                     "source_count": len(source_files),
+                    "delete_source_files": payload.delete_source_files,
                 },
                 client_ip=client_ip,
             )
             self.db.commit()
             self.db.refresh(merged_file)
-            return self._to_detail_response(merged_file, parent_path)
         except Exception:
             self.db.rollback()
             if merged_file is not None:
@@ -979,6 +988,16 @@ class FileService:
             )
             self.db.commit()
             raise
+
+        for storage_path in source_storage_paths:
+            try:
+                self.storage_service.delete_object(storage_path)
+            except Exception:
+                self.logger.exception(
+                    "合并后清理源文件存储对象失败",
+                    extra={"action": "merge_documents", "target_type": "file", "target_id": merged_file.file_id},
+                )
+        return self._to_detail_response(merged_file, parent_path)
 
     def read_text(
         self,

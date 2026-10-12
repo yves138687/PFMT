@@ -86,9 +86,11 @@ const mergeDragFileId = ref('')
 const mergeDocumentForm = ref<{
   target_name: string
   target_format: DocumentFormat
+  delete_source_files: boolean
 }>({
   target_name: '合并文档.md',
-  target_format: 'markdown'
+  target_format: 'markdown',
+  delete_source_files: false
 })
 const movePathVisible = ref(false)
 const movePathLoading = ref(false)
@@ -815,7 +817,8 @@ function openMergeSelectedDocuments() {
   }
   mergeDocumentForm.value = {
     target_name: '合并文档.md',
-    target_format: 'markdown'
+    target_format: 'markdown',
+    delete_source_files: false
   }
   mergeDocumentOrder.value = [...selectedDocumentFiles.value]
   mergeDragFileId.value = ''
@@ -953,7 +956,8 @@ async function mergeSelectedDocuments() {
       {
         file_ids: mergeDocumentOrder.value.map((file) => file.file_id),
         target_format: mergeDocumentForm.value.target_format,
-        target_name: normalizeOptionalText(mergeDocumentForm.value.target_name)
+        target_name: normalizeOptionalText(mergeDocumentForm.value.target_name),
+        delete_source_files: mergeDocumentForm.value.delete_source_files
       }
     )
     mergeDocumentVisible.value = false
@@ -1659,6 +1663,21 @@ onBeforeUnmount(() => {
         <el-form-item label="新文件名">
           <el-input v-model="mergeDocumentForm.target_name" maxlength="512" show-word-limit />
         </el-form-item>
+        <el-form-item label="源文件处理">
+          <el-switch
+            v-model="mergeDocumentForm.delete_source_files"
+            :disabled="mergeDocumentLoading"
+            active-text="合并成功后删除原文件"
+            inactive-text="保留原文件"
+          />
+        </el-form-item>
+        <el-alert
+          v-if="mergeDocumentForm.delete_source_files"
+          type="warning"
+          :closable="false"
+          show-icon
+          :title="`合并成功后将删除 ${mergeDocumentOrder.length} 个原文件，此操作不可恢复。`"
+        />
       </el-form>
       <template #footer>
         <el-button @click="mergeDocumentVisible = false">取消</el-button>

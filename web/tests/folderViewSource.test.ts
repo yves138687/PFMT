@@ -101,6 +101,9 @@ describe('FolderView source contract', () => {
     expect(source).toContain('handleMergeDocumentDragStart')
     expect(source).toContain('handleMergeDocumentDrop')
     expect(source).toContain('moveMergeDocument')
+    expect(source).toContain('delete_source_files')
+    expect(source).toContain('合并成功后删除原文件')
+    expect(source).toContain('此操作不可恢复')
     expect(source).toContain("name: 'document'")
   })
 

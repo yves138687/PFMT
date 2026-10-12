@@ -1748,6 +1748,40 @@ def test_document_merge_creates_new_markdown_by_requested_order(
     assert client.get(f"/api/files/{first.json()['file_id']}/document", headers=auth_headers).json()["content"] == "# A\none"
 
 
+def test_document_merge_can_delete_source_files(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    """用户明确选择后，合并成功会删除源文件。"""
+
+    first = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("a.txt", b"one", "text/plain")},
+    )
+    second = client.post(
+        "/api/files/upload",
+        headers=auth_headers,
+        data={"path_id": "root"},
+        files={"file": ("b.txt", b"two", "text/plain")},
+    )
+    assert first.status_code == 201
+    assert second.status_code == 201
+
+    merge_response = client.post(
+        "/api/files/merge",
+        headers=auth_headers,
+        json={
+            "file_ids": [first.json()["file_id"], second.json()["file_id"]],
+            "delete_source_files": True,
+        },
+    )
+
+    assert merge_response.status_code == 201
+    assert client.get(f"/api/files/{first.json()['file_id']}/document", headers=auth_headers).status_code == 404
+    assert client.get(f"/api/files/{second.json()['file_id']}/document", headers=auth_headers).status_code == 404
+
+
 def test_document_merge_rejects_non_document_file(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
