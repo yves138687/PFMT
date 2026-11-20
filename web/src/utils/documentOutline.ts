@@ -1,3 +1,5 @@
+import { parseMarkdownHeadings } from './markdownHeadings'
+
 export interface DocumentOutlineItem {
   id: string
   title: string
@@ -14,32 +16,11 @@ interface HeadingSeed {
 const headingSelector = 'h1, h2, h3, h4, h5, h6'
 
 export function buildMarkdownOutline(source: string): DocumentOutlineItem[] {
-  const headings: HeadingSeed[] = []
-  let inFence = false
-
-  const lines = source.split(/\r?\n/)
-  for (const [index, line] of lines.entries()) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence) {
-      continue
-    }
-
-    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
-    if (!match) {
-      continue
-    }
-
-    headings.push({
-      level: match[1].length as DocumentOutlineItem['level'],
-      sourceLine: index,
-      title: stripMarkdownInline(match[2])
-    })
-  }
-
-  return assignHeadingIds(headings)
+  return assignHeadingIds(parseMarkdownHeadings(source).headings.map((heading) => ({
+    level: heading.level as DocumentOutlineItem['level'],
+    sourceLine: heading.line,
+    title: stripMarkdownInline(heading.title)
+  })))
 }
 
 export function buildHtmlOutline(source: string): DocumentOutlineItem[] {

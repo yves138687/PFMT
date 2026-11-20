@@ -4,6 +4,7 @@ from io import BytesIO
 import zipfile
 
 import jwt
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -1780,6 +1781,91 @@ def test_document_merge_can_delete_source_files(
     assert merge_response.status_code == 201
     assert client.get(f"/api/files/{first.json()['file_id']}/document", headers=auth_headers).status_code == 404
     assert client.get(f"/api/files/{second.json()['file_id']}/document", headers=auth_headers).status_code == 404
+
+
+@pytest.mark.parametrize(
+    "first_name,target_format,delete_sources,target_name,occupied_name,expected_name",
+    [
+        ("first.md", "markdown", False, None, None, "first(1).md"),
+        ("first.md", "markdown", True, None, None, "first.md"),
+        ("first(1).md", "markdown", True, None, None, "first(1).md"),
+        ("first.txt", "markdown", True, None, None, "first.md"),
+        ("first.md", "plain_text", True, None, None, "first.txt"),
+        ("first.md", "html", True, None, None, "first.html"),
+        ("first.md", "markdown", True, "custom.md", None, "custom.md"),
+        ("first.txt", "markdown", True, None, "first.md", "first(1).md"),
+        ("first.md", "markdown", True, None, "first(1).md", "first.md"),
+    ],
+)
+def test_document_merge_resolves_final_name(
+    client: TestClient, auth_headers: dict[str, str], first_name: str,
+    target_format: str, delete_sources: bool, target_name: str | None,
+    occupied_name: str | None, expected_name: str,
+) -> None:
+    def upload(name: str) -> str:
+        response = client.post(
+            "/api/files/upload", headers=auth_headers, data={"path_id": "root"},
+            files={"file": (name, b"content", "text/plain")},
+        )
+        assert response.status_code == 201
+        return response.json()["file_id"]
+
+    # 请求首项刻意与上传顺序不同，名称以合并列表顺序为准。
+    second_id = upload("second.txt")
+    first_id = upload(first_name)
+    occupied_id = upload(occupied_name) if occupied_name else None
+    response = client.post(
+        "/api/files/merge", headers=auth_headers,
+        json={"file_ids": [first_id, second_id], "target_format": target_format,
+              "delete_source_files": delete_sources, "target_name": target_name},
+    )
+    assert response.status_code == 201
+    assert response.json()["original_name"] == expected_name
+    document = client.get(f"/api/files/{response.json()['file_id']}/document", headers=auth_headers)
+    assert document.status_code == 200
+    assert "content" in document.json()["content"]
+    for file_id in [first_id, second_id]:
+        assert client.get(f"/api/files/{file_id}/document", headers=auth_headers).status_code == (
+            404 if delete_sources else 200
+        )
+    if occupied_id:
+        assert client.get(f"/api/files/{occupied_id}/document", headers=auth_headers).status_code == 200
+
+
+def test_document_merge_name_failure_rolls_back_sources(
+    client: TestClient, auth_headers: dict[str, str], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.services.file_service import FileService
+
+    file_ids = []
+    for name in ["first.md", "second.md"]:
+        response = client.post(
+            "/api/files/upload", headers=auth_headers, data={"path_id": "root"},
+            files={"file": (name, b"original", "text/markdown")},
+        )
+        assert response.status_code == 201
+        file_ids.append(response.json()["file_id"])
+    storage_root = Path(get_settings().storage_root)
+    original_objects = {path for path in storage_root.rglob("*") if path.is_file()}
+    available_name = FileService._available_file_name
+
+    def fail_final_name(self, path_id, original_name, *, exclude_file_id=None):
+        if exclude_file_id is not None:
+            raise RuntimeError("final name failure")
+        return available_name(self, path_id, original_name)
+
+    monkeypatch.setattr(FileService, "_available_file_name", fail_final_name)
+    with pytest.raises(RuntimeError, match="final name failure"):
+        client.post("/api/files/merge", headers=auth_headers,
+                    json={"file_ids": file_ids, "delete_source_files": True})
+    for file_id in file_ids:
+        response = client.get(f"/api/files/{file_id}/document", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["content"] == "original"
+    assert {path for path in storage_root.rglob("*") if path.is_file()} == original_objects
+    with Session(get_engine()) as db:
+        active_files = db.scalars(select(FileInfo).where(FileInfo.status == "active")).all()
+        assert {file.file_id for file in active_files} == set(file_ids)
 
 
 def test_document_merge_rejects_non_document_file(

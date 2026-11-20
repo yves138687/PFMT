@@ -2,6 +2,7 @@
 
 import re
 from dataclasses import dataclass
+from app.utils.markdown_headings import iter_markdown_headings
 
 
 DEFAULT_PARAGRAPHS_PER_SECTION = 60
@@ -44,16 +45,10 @@ def build_read_sections(source: str, document_format: str) -> list[ReadSection]:
 
 
 def _split_markdown_chapters(source: str) -> list[ReadSection]:
-    lines = source.splitlines()
-    headings: list[_HeadingCandidate] = []
-    in_fence = False
-    for index, line in enumerate(lines):
-        if re.match(r"^\s*(```|~~~)", line):
-            in_fence = not in_fence
-            continue
-        match = None if in_fence else re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line)
-        if match:
-            headings.append(_HeadingCandidate(index, _strip_markdown(match.group(2)), len(match.group(1)), "markdown", 100))
+    headings = [
+        _HeadingCandidate(index, _strip_markdown(title), level, "markdown", 100)
+        for index, level, title in iter_markdown_headings(source)
+    ]
     if len(headings) < 2:
         return []
     top_level = min(heading.level for heading in headings)

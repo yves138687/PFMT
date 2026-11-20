@@ -68,6 +68,7 @@ from app.utils.file_type import (
 )
 from app.utils.ids import new_business_id
 from app.utils.document_reading import build_read_sections
+from app.utils.markdown_headings import iter_markdown_headings
 
 
 # Large documents are rendered one section at a time in the browser. Returning a
@@ -934,7 +935,7 @@ class FileService:
             raise NotFoundError("文件不存在")
 
         merged_content = self._merge_document_contents(source_files, payload.target_format)
-        target_name = payload.target_name or f"合并文档{document_format_extension(payload.target_format)}"
+        target_name = payload.target_name or source_files[0][0].original_name
         target_ext = normalize_extension(target_name)
         expected_ext = document_format_extension(payload.target_format)
         if target_ext != expected_ext:
@@ -958,6 +959,11 @@ class FileService:
                     source_file_ids.add(file_info.file_id)
                     source_storage_paths.append(file_info.storage_path)
                     self.repository.soft_delete(file_info, user_id=current_user.user_id)
+                # 先落盘再释放源文件名称，最后按剩余有效文件重新确定展示名称。
+                self.db.flush()
+                merged_file.original_name = self._available_file_name(
+                    parent_path.path_id, target_name, exclude_file_id=merged_file.file_id
+                )
             self.audit_service.record(
                 user_id=current_user.user_id,
                 action_type="merge_documents",
@@ -2265,7 +2271,8 @@ class FileService:
         if document_format == "markdown":
             html_lines: list[str] = []
             in_list = False
-            for raw_line in content.splitlines():
+            headings = {index: (level, title) for index, level, title in iter_markdown_headings(content)}
+            for index, raw_line in enumerate(content.splitlines()):
                 line = raw_line.strip()
                 if not line:
                     if in_list:
@@ -2283,13 +2290,13 @@ class FileService:
                     else:
                         html_lines.append(f"<p>{escape(line)}</p>")
                     continue
-                heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+                heading = headings.get(index)
                 if heading:
                     if in_list:
                         html_lines.append("</ul>")
                         in_list = False
-                    level = len(heading.group(1))
-                    html_lines.append(f"<h{level}>{escape(heading.group(2))}</h{level}>")
+                    level, title = heading
+                    html_lines.append(f"<h{level}>{escape(title)}</h{level}>")
                     continue
                 list_item = re.match(r"^[-*]\s+(.+)$", line)
                 if list_item:

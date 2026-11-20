@@ -1,4 +1,5 @@
 import type { DocumentFormat } from '@/types/files'
+import { parseMarkdownHeadings } from './markdownHeadings'
 
 export interface ReadSection {
   title: string
@@ -36,18 +37,9 @@ export function buildReadSections(
 
 function splitMarkdownChapters(source: string): ReadSection[] {
   const lines = source.split(/\r?\n/)
-  let inFence = false
-  const headings: Array<{ line: number; level: number; title: string }> = []
-
-  lines.forEach((line, index) => {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence
-      return
-    }
-    if (inFence) return
-    const match = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line)
-    if (match) headings.push({ line: index, level: match[1].length, title: stripMarkdown(match[2]) })
-  })
+  const headings = parseMarkdownHeadings(source).headings.map((heading) => ({
+    ...heading, title: stripMarkdown(heading.title)
+  }))
   if (headings.length < 2) return []
 
   const chapterLevel = Math.min(...headings.map((heading) => heading.level))

@@ -86,12 +86,13 @@ const mergeDocumentVisible = ref(false)
 const mergeDocumentLoading = ref(false)
 const mergeDocumentOrder = ref<FileInfo[]>([])
 const mergeDragFileId = ref('')
+const mergeDocumentNameEdited = ref(false)
 const mergeDocumentForm = ref<{
   target_name: string
   target_format: DocumentFormat
   delete_source_files: boolean
 }>({
-  target_name: '合并文档.md',
+  target_name: '',
   target_format: 'markdown',
   delete_source_files: false
 })
@@ -857,15 +858,34 @@ function openMergeSelectedDocuments() {
     ElMessage.warning('只能合并文本、Markdown 或 HTML 文档')
     return
   }
+  mergeDocumentNameEdited.value = false
+  mergeDocumentOrder.value = [...selectedDocumentFiles.value]
   mergeDocumentForm.value = {
-    target_name: '合并文档.md',
+    target_name: mergeDocumentDefaultName(mergeDocumentOrder.value[0]?.original_name ?? '', 'markdown'),
     target_format: 'markdown',
     delete_source_files: false
   }
-  mergeDocumentOrder.value = [...selectedDocumentFiles.value]
   mergeDragFileId.value = ''
   mergeDocumentVisible.value = true
 }
+
+function mergeDocumentDefaultName(name: string, format: DocumentFormat) {
+  const extension = format === 'plain_text' ? '.txt' : format === 'html' ? '.html' : '.md'
+  const dotIndex = name.lastIndexOf('.')
+  return `${dotIndex > 0 ? name.slice(0, dotIndex) : name}${extension}`
+}
+
+watch(
+  () => [mergeDocumentOrder.value[0]?.original_name, mergeDocumentForm.value.target_format] as const,
+  ([name, format], [, previousFormat]) => {
+    if (!mergeDocumentNameEdited.value && name) {
+      mergeDocumentForm.value.target_name = mergeDocumentDefaultName(name, format)
+    } else if (format !== previousFormat && mergeDocumentForm.value.target_name.trim()) {
+      mergeDocumentForm.value.target_name = mergeDocumentDefaultName(mergeDocumentForm.value.target_name, format)
+    }
+  },
+  { flush: 'sync' }
+)
 
 function moveMergeDocument(fromIndex: number, toIndex: number) {
   if (
@@ -1738,7 +1758,12 @@ onBeforeUnmount(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="新文件名">
-          <el-input v-model="mergeDocumentForm.target_name" maxlength="512" show-word-limit />
+          <el-input
+            v-model="mergeDocumentForm.target_name"
+            maxlength="512"
+            show-word-limit
+            @input="mergeDocumentNameEdited = true"
+          />
         </el-form-item>
         <el-form-item label="源文件处理">
           <el-switch
